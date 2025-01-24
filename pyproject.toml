@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "obsidian_notes"
+version = "0.1.0"
+description = "A tool for processing and analyzing Obsidian notes"
+requires-python = ">=3.8"
+dependencies = [
+    "click",
+    "inquirer",
+    "llama-cpp-python",
+    "pyyaml"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

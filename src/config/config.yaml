@@ -5,50 +5,5 @@ vault:
 
 # Processing configuration
 processing:
-  output_dir: "/path/to/your/obsidian/vault/.processed"
+  output_dir: "/path/to/your/obsidian/vault/processed"
   json_extension: ".json"
-  spaced_repetition_dir: "Resources/Spaced Repetition"
-
-# Note parsing patterns
-patterns:
-  task_markers:
-    - "- [ ]"
-    - "#task"
-  heading_markers:
-    - "#"
-    - "##"
-    - "###"
-  bullet_markers:
-    - "-"
-    - "*"
-    - "+"
-  common_tags:
-    - "#idea"
-    - "#task"
-    - "#research"
-    - "#concept"
-    - "#flashcard"
-    - "#question"
-    - "#summary"
-
-# LLM configuration
-llm:
-  model_path: "/path/to/Yi-1.5-34B-Chat-Q6_K.gguf"
-  n_gpu_layers: 20
-  n_ctx: 4096
-  chat_format: "chatml-function-calling"
-  temperature: 0.7
-  max_tokens: 2000
-
-# Logging configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(levelname)s - %(message)s"
-  file: "knowledge_management.log"
-
-# External tools configuration
-external_tools:
-  google_search:
-    enabled: true
-    api_key: ""  # Add your API key here
-    search_engine_id: ""  # Add your search engine ID here

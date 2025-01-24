@@ -122,7 +122,7 @@ def process_vault(vault_path: str, debug: bool = False, interactive: bool = Fals
                 logger.debug(f"Frontmatter: {parser.frontmatter}")
                 
                 if export_json:
-                    json_path = parser.process_file(export_json=True)
+                    json_path = parser.parse_file(export_json=True)
                     logger.info(f"Exported to JSON: {json_path}")
                     continue
                 
@@ -162,7 +162,7 @@ def process_single_file(file_path: str, debug: bool = False, export_json: bool =
             logger.debug(f"Frontmatter: {parser.frontmatter}")
             
             if export_json:
-                json_path = parser.process_file(export_json=True)
+                json_path = parser.parse_file(export_json=True)
                 logger.info(f"Exported to JSON: {json_path}")
                 return
                 

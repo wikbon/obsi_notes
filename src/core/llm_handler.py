@@ -1,6 +1,10 @@
 from llama_cpp import Llama
 from typing import Optional, Dict, Any, List
 import logging
+import json
+import re
+import click
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -14,8 +18,7 @@ class LLMHandler:
         n_gpu_layers: int = 20,
         n_ctx: int = 4096,
         chat_format: str = "chatml-function-calling",
-        verbose: bool = False,
-        config: Dict[str, Any] = {}
+        verbose: bool = False
     ):
         """Initialize the LLM handler.
         
@@ -25,11 +28,9 @@ class LLMHandler:
             n_ctx: Context window size
             chat_format: Format for chat interactions
             verbose: Whether to print detailed logs
-            config: Configuration for external tools
         """
         self.model_path = model_path
         self.verbose = verbose
-        self.config = config
         if verbose:
             logger.info(f"Initializing LLM with model: {model_path}")
             
@@ -91,16 +92,9 @@ class LLMHandler:
             
         Returns:
             Dict containing the chat completion response
-            
-        Raises:
-            ValueError: If messages are invalid or empty
-            RuntimeError: If LLM completion fails
         """
         if messages is None:
             messages = self.message_history
-            
-        if not messages:
-            raise ValueError("No messages provided for chat completion")
             
         if self.verbose:
             logger.info("Creating chat completion")
@@ -109,120 +103,262 @@ class LLMHandler:
             if tools:
                 logger.info(f"Number of tools available: {len(tools)}")
         
-        try:
-            response = self.llm.create_chat_completion(
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                temperature=temperature,
-                **kwargs
+        response = self.llm.create_chat_completion(
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            **kwargs
+        )
+        
+        if self.verbose:
+            logger.info("Received response from LLM")
+            
+        # Add assistant's response to history
+        if response.get("choices") and len(response["choices"]) > 0:
+            assistant_message = response["choices"][0].get("message", {})
+            if assistant_message:
+                self.message_history.append(assistant_message)
+                if self.verbose:
+                    logger.info("Added assistant's response to history")
+        
+        return response
+
+    def extract_atomic_notes(
+        self, 
+        note_segments: List[Dict[str, Any]], 
+        temperature: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract atomic notes from each segment using the LLM.
+        
+        Args:
+            note_segments (List[Dict[str, Any]]):
+                A list of note segments, each typically has keys like 
+                'timestamp' and 'content'.
+            temperature (float):
+                The temperature setting for the LLM output (creativity).
+                
+        Returns:
+            List[Dict[str, Any]]:
+                Returns a combined list of atomic note objects. Each object 
+                contains fields like 'note'.
+        """
+        all_extracted_notes = []
+        
+        for segment in note_segments:
+            content = segment["content"]
+            timestamp = segment.get("timestamp", "")
+            
+            # Build the system and user messages
+            system_prompt = (
+                "You are an assistant specialized in note summarization and extraction. "
+                "Your task is to extract atomic notes and return them in JSON format. "
+                "An atomic note should capture one complete, self-contained idea - "
+                "don't split related concepts that form a single coherent thought. "
+                "DO NOT include any markdown formatting or explanation text. "
+                "Return ONLY the raw JSON array."
             )
             
+            user_prompt = f"""Here is a raw note segment{f' (timestamp: {timestamp})' if timestamp else ''}:
+
+{content}
+
+Extract atomic notes following these rules:
+1. Each note should be one complete, self-contained idea.
+2. Keep related concepts together if they form a single coherent thought.
+3. Don't split definitions or explanations of a single concept.
+4. If multiple sentences make up a single idea, keep them together as a single atomic note.
+5. If in doubt, don't split a sentence into multiple atomic notes.
+
+Return a JSON array in this exact format (no markdown, no explanation):
+[
+  {{
+    "note": "the complete atomic idea here",
+  }}
+]"""
+            
+            # Use the LLM
             if self.verbose:
-                logger.info("Received response from LLM")
+                logger.info(f"Processing segment{f' from {timestamp}' if timestamp else ''}")
                 
-            # Add assistant's response to history
-            if response.get("choices") and len(response["choices"]) > 0:
-                assistant_message = response["choices"][0].get("message", {})
-                if assistant_message:
-                    self.message_history.append(assistant_message)
-                    if self.verbose:
-                        logger.info("Added assistant's response to history")
+            response = self.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=2048,  # adjust as needed
+            )
             
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error during chat completion: {str(e)}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg) from e
-            
-    def google_search(self, query: str) -> List[Dict[str, str]]:
-        """Perform a Google search using the configured API.
-        
-        Args:
-            query (str): Search query
-            
-        Returns:
-            List[Dict[str, str]]: List of search results with title and snippet
-        """
-        if not self.config.get('external_tools', {}).get('google_search', {}).get('enabled'):
-            logger.warning("Google Search is not enabled in config")
-            return []
-            
-        api_key = self.config.get('external_tools', {}).get('google_search', {}).get('api_key')
-        search_engine_id = self.config.get('external_tools', {}).get('google_search', {}).get('search_engine_id')
-        
-        if not api_key or not search_engine_id:
-            logger.warning("Google Search API credentials not configured")
-            return []
-            
-        try:
-            from googleapiclient.discovery import build
-            service = build("customsearch", "v1", developerKey=api_key)
-            
-            result = service.cse().list(
-                q=query,
-                cx=search_engine_id,
-                num=5  # Limit to 5 results
-            ).execute()
-            
-            search_results = []
-            if 'items' in result:
-                for item in result['items']:
-                    search_results.append({
-                        'title': item['title'],
-                        'snippet': item.get('snippet', ''),
-                        'link': item['link']
-                    })
+            # The LLM should respond with JSON. Let's parse it safely:
+            raw_assistant_message = ""
+            if response.get("choices"):
+                raw_assistant_message = response["choices"][0]["message"]["content"]
+ 
+            # Attempt to parse JSON
+            try:
+                # Preprocess input to remove BOM and strip whitespace
+                raw_assistant_message = raw_assistant_message.lstrip("\ufeff").strip()
+                
+                # Remove triple backticks with `json` marker if present
+                if raw_assistant_message.startswith("```json") and raw_assistant_message.endswith("```"):
+                    raw_assistant_message = raw_assistant_message[7:-3].strip()
+                elif raw_assistant_message.startswith("```") and raw_assistant_message.endswith("```"):
+                    raw_assistant_message = raw_assistant_message[3:-3].strip()
+                # Remove trailing commas inside objects
+                raw_assistant_message = re.sub(r",\s*}", "}", raw_assistant_message)
+
+                # Validate JSON structure before parsing
+                if not raw_assistant_message.startswith(("{", "[")):
+                    logger.error("Input does not appear to be valid JSON.")
+                    return
+                
+                # Parse JSON   
+                extracted_list = json.loads(raw_assistant_message)
+                
+                # If it's not a list, wrap it in a list for uniformity
+                if not isinstance(extracted_list, list):
+                    extracted_list = [extracted_list]
                     
-            return search_results
-            
-        except Exception as e:
-            logger.error(f"Error during Google search: {str(e)}")
-            return []
-            
-    def summarize_search_results(self, results: List[Dict[str, str]]) -> str:
-        """Summarize search results using the LLM.
+                # Print each extracted note to CLI
+                for note in extracted_list:
+
+                    note_text = note.get("note", "")
+                    click.echo(f"\nOriginal input to LLM:\n{content}\n")
+                    click.echo(f"\nExtracted note: {note_text}")
+                    
+                all_extracted_notes.extend(extracted_list)
+                
+                if self.verbose:
+                    logger.info(f"Successfully extracted {len(extracted_list)} atomic notes")
+                    
+            except json.JSONDecodeError:
+                logger.error(f"JSON parse error for segment{f' at {timestamp}' if timestamp else ''}")
+                logger.error(f"Raw response was:\n{raw_assistant_message}\n")
+                
+        return all_extracted_notes
+
+    def clear_chat_history(self) -> None:
+        """
+        Clear the chat history for the current LLM session.
+        This can be useful to reset context between different tasks.
+        """
+        if hasattr(self, '_chat_history'):
+            self._chat_history = []
+        if self.verbose:
+            logger.info("Chat history cleared")
+
+    def generate_daily_hub_note(
+        self,
+        parsed_notes: List[Dict[str, Any]],
+        source_file: str,
+        date_str: str = None,
+        temperature: float = 0.7,
+        save_markdown: bool = True,
+        output_dir: Optional[Path] = None,
+        vault_path: Optional[Path] = None
+    ) -> str:
+        """
+        Generate a structured daily hub note in Markdown format from parsed notes.
         
         Args:
-            results (List[Dict[str, str]]): List of search results
+            parsed_notes (List[Dict[str, Any]]): List of parsed notes, each containing at least
+                                               'timestamp' and 'content' keys.
+            source_file (str): Path to the source file being processed
+            date_str (str, optional): The date string for the note. If None, will be extracted from filename
+            temperature (float): LLM creativity level (default: 0.7).
+            save_markdown (bool): Whether to save the generated markdown to a file
+            output_dir (Path, optional): Directory to save output files. Required if save_markdown is True
+            vault_path (Path, optional): Path to the vault root. Required if save_markdown is True
             
         Returns:
-            str: Summarized information
+            str: A formatted Markdown string containing the organized daily hub note.
         """
-        if not results:
-            return "No search results available."
+        # Extract date from filename if not provided
+        if date_str is None:
+            source_path = Path(source_file)
+            date_str = source_path.stem.split('-')[0]  # Assumes YYYY-MM-DD-something.ext format
             
-        system_prompt = """You are a research assistant. Summarize the key information from these search results."""
-        
-        user_prompt = "Here are the search results to summarize:\n\n"
-        for i, result in enumerate(results, 1):
-            user_prompt += f"{i}. {result['title']}\n{result['snippet']}\n\n"
+        # Format notes for the prompt
+        lines_for_prompt = []
+        for note in parsed_notes:
+            timestamp = note.get('timestamp', 'N/A')
+            content = note.get('content', '')
+            lines_for_prompt.append(f"- Timestamp: {timestamp} | Content: {content}")
             
-        self.add_message("system", system_prompt)
-        self.add_message("user", user_prompt)
+        combined_text = "\n".join(lines_for_prompt)
         
-        try:
-            response = self.create_chat_completion(temperature=0.3)
-            return response['choices'][0]['message']['content']
-        except Exception as e:
-            logger.error(f"Error summarizing search results: {str(e)}")
-            return "Error summarizing search results."
+        # Create system and user prompts
+        system_prompt = (
+            "You are an assistant that organizes daily mind dumps into a nicely formatted "
+            "Markdown document, complete with headings, subheadings, summaries, and an Action Items list."
+        )
+        
+        user_prompt = f"""
+Here is a list of timestamped notes for {date_str}:
+
+{combined_text}
+
+Please do the following:
+1) Identify main topics or themes across these notes
+2) Group them under subheadings in Markdown (## or ###, etc.)
+3) Summarize each group in a concise way
+4) Provide an overall daily summary at the top
+5) Extract any actionable items (to-dos, next steps) and place them in a separate 'Action Items' section
+6) Return the final output in valid Markdown
+7) The final note's top heading should be '# Daily Note - {date_str}'
+
+Make sure the final format is well-structured, with bullet points or short paragraphs where relevant.
+"""
+        
+        # Call the LLM
+        if self.verbose:
+            logger.info(f"Generating hub note for {date_str}")
             
-    def research_topic(self, topic: str) -> Dict[str, Any]:
-        """Research a topic using Google Search and summarize results.
+        response = self.create_chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=2048
+        )
         
-        Args:
-            topic (str): Topic to research
+        # Extract the Markdown content
+        if response.get("choices") and len(response["choices"]) > 0:
+            markdown_result = response["choices"][0]["message"]["content"]
+            # Remove wrapping markdown code block if present
+            if markdown_result.startswith("```markdown\n"):
+                markdown_result = markdown_result[11:]  # Remove ```markdown\n
+            elif markdown_result.startswith("```\n"):
+                markdown_result = markdown_result[4:]  # Remove ```\n
+            if markdown_result.endswith("\n```"):
+                markdown_result = markdown_result[:-4]  # Remove \n```
+            markdown_result = markdown_result.strip()
+        else:
+            markdown_result = f"# Daily Note - {date_str}\n\n*(No response from LLM)*"
+            if self.verbose:
+                logger.error("Failed to get response from LLM")
+        
+        # Save markdown if requested
+        if save_markdown:
+            if output_dir is None or vault_path is None:
+                raise ValueError("output_dir and vault_path must be provided when save_markdown is True")
+                
+            source_path = Path(source_file)
+            # Get relative path from vault root and construct output path
+            rel_path = source_path.relative_to(vault_path)
+            output_path = output_dir / rel_path.with_suffix('.hub.md')
             
-        Returns:
-            Dict[str, Any]: Research results including summary and sources
-        """
-        search_results = self.google_search(topic)
-        summary = self.summarize_search_results(search_results)
+            # Ensure output directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write markdown file
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_result)
+                
+            if self.verbose:
+                logger.info(f"Saved hub note to {output_path}")
         
-        return {
-            'topic': topic,
-            'summary': summary,
-            'sources': [result['link'] for result in search_results]
-        }
+        return markdown_result
