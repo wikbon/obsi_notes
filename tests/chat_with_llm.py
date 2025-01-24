@@ -49,6 +49,7 @@ def main():
             response = handler.create_chat_completion(temperature=0.7)
             
             # Extract and print assistant's response
+            print(response)
             assistant_response = response['choices'][0]['message']['content']
             print(f"\nAssistant: {assistant_response}")
             

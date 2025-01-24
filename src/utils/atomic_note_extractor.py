@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import json
 import logging
+import click
 
 from src.core.llm_handler import LLMHandler
 from src.utils.note_parser import NoteParser
@@ -91,6 +92,7 @@ class AtomicNoteExtractor:
             try:
                 atomic_notes = self.process_file(
                     str(file_path),
+                    export_json=export_json,
                     temperature=temperature
                 )
                 results[str(file_path)] = atomic_notes
@@ -129,7 +131,8 @@ class AtomicNoteExtractor:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(export_data, f, ensure_ascii=False, indent=2)
             
-        if self.verbose:
-            logger.info(f"Exported atomic notes to {output_path}")
+        # Always log the export, not just in verbose mode
+        logger.info(f"Exported atomic notes to: {output_path}")
+        click.echo(f"Saved atomic notes to: {output_path}")
             
         return str(output_path)

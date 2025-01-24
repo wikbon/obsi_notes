@@ -11,12 +11,16 @@ logger = logging.getLogger(__name__)
 
 class LLMHandler:
     """Handler for LLaMA model interactions."""
-    
+
+
     def __init__(
         self,
-        model_path: str = "/path/to/Yi-1.5-34B-Chat-Q6_K.gguf",
-        n_gpu_layers: int = 20,
-        n_ctx: int = 4096,
+        # model_path: str = "/path/to/Yi-1.5-34B-Chat-Q6_K.gguf",
+        model_path: str = "/path/to/granite-3.1-8b-instruct-Q6_K_L.gguf",
+        # model_path: str = "/path/to/DeepSeek-R1-Distill-Llama-8B-Q8_0.gguf",
+
+        n_gpu_layers: int = -1,
+        n_ctx: int = 8192,
         chat_format: str = "chatml-function-calling",
         verbose: bool = False
     ):
@@ -278,7 +282,11 @@ Return a JSON array in this exact format (no markdown, no explanation):
         # Extract date from filename if not provided
         if date_str is None:
             source_path = Path(source_file)
-            date_str = source_path.stem.split('-')[0]  # Assumes YYYY-MM-DD-something.ext format
+            parts = source_path.stem.split('-')
+            if len(parts) >= 3:
+                date_str = f"{parts[0]}-{parts[1]}-{parts[2]}"  # Combines YYYY-MM-DD
+            else:
+                date_str = source_path.stem  # Fallback to full stem if not in expected format
             
         # Format notes for the prompt
         lines_for_prompt = []
@@ -322,7 +330,7 @@ Make sure the final format is well-structured, with bullet points or short parag
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
-            max_tokens=2048
+            max_tokens=4096,
         )
         
         # Extract the Markdown content

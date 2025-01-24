@@ -165,27 +165,98 @@ class NoteCLI:
         Args:
             note_path: Path to the note file
         """
-        click.echo(f"\nProcessing {note_path.name} into atomic notes...")
+        click.echo(f"\nProcessing atomic notes from {note_path.name}...")
         
         try:
-            # Process the file
+            # Ask about JSON export
+            questions = [
+                inquirer.List(
+                    'export_json',
+                    message="Export results to JSON?",
+                    choices=[
+                        ('Yes', True),
+                        ('No', False)
+                    ],
+                    carousel=True
+                )
+            ]
+            
+            answers = inquirer.prompt(questions)
+            if not answers:
+                return
+                
+            export_json = answers['export_json']
+            
             atomic_notes = self.extractor.process_file(
-                str(note_path),
-                export_json=True,
+                file_path=str(note_path),
+                export_json=export_json,
                 temperature=0.7
             )
             
             # Display results
-            click.echo(f"\nExtracted {len(atomic_notes)} atomic notes:")
-            for i, note in enumerate(atomic_notes, 1):
-                click.echo(f"\n{i}. {note['note']}")
-                if note.get('tags'):
-                    click.echo(f"   Tags: {', '.join(note['tags'])}")
-                if note.get('links'):
-                    click.echo(f"   Links: {', '.join(note['links'])}")
-                    
+            click.echo("\nExtracted atomic notes:")
+            for note in atomic_notes:
+                click.echo(f"- {note.get('note', '')}")
+                
         except Exception as e:
             click.echo(f"Error processing note: {str(e)}")
+
+    def process_directory_atomic_notes(self, directory_path: Path) -> None:
+        """Process all markdown files in a directory and extract atomic notes.
+        
+        Args:
+            directory_path: Path to the directory containing notes
+        """
+        click.echo(f"\nProcessing atomic notes in directory: {directory_path}")
+        
+        try:
+            # Ask for recursive processing and JSON export
+            questions = [
+                inquirer.List(
+                    'recursive',
+                    message="Process subdirectories recursively?",
+                    choices=[
+                        ('Yes', True),
+                        ('No', False)
+                    ],
+                    carousel=True
+                ),
+                inquirer.List(
+                    'export_json',
+                    message="Export results to JSON?",
+                    choices=[
+                        ('Yes', True),
+                        ('No', False)
+                    ],
+                    carousel=True
+                )
+            ]
+            
+            answers = inquirer.prompt(questions)
+            if not answers:
+                return
+                
+            recursive = answers['recursive']
+            export_json = answers['export_json']
+            
+            # Process the directory
+            results = self.extractor.process_directory(
+                directory_path=str(directory_path),
+                recursive=recursive,
+                export_json=export_json,
+                temperature=0.7
+            )
+            
+            # Display results
+            click.echo("\nProcessing complete!")
+            for file_path, atomic_notes in results.items():
+                click.echo(f"\nFile: {file_path}")
+                click.echo("Atomic notes:")
+                for note in atomic_notes:
+                    click.echo(f"- {note.get('note', '')}")
+                
+        except Exception as e:
+            click.echo(f"Error processing directory: {str(e)}")
 
     def generate_hub_note(self, note_path: Path) -> None:
         """Generate a structured hub note from the daily note.
@@ -225,28 +296,56 @@ class NoteCLI:
         Args:
             directory_path: Path to the directory containing notes
         """
-        click.echo(f"\nProcessing directory: {directory_path}")
+        click.echo(f"\nProcessing directory and generating hub notes: {directory_path}")
         
         try:
-            # Get all markdown files in directory
-            md_files = list(directory_path.glob("**/*.md"))
-            if not md_files:
-                click.echo("No markdown files found in directory")
+            # Ask for recursive processing
+            questions = [
+                inquirer.List(
+                    'recursive',
+                    message="Process subdirectories recursively?",
+                    choices=[
+                        ('Yes', True),
+                        ('No', False)
+                    ],
+                    carousel=True
+                )
+            ]
+            
+            answers = inquirer.prompt(questions)
+            if not answers:
                 return
                 
-            click.echo(f"Found {len(md_files)} markdown files")
+            recursive = answers['recursive']
+            pattern = "**/*.md" if recursive else "*.md"
             
-            # Process each file
-            for file_path in md_files:
-                click.echo(f"\nProcessing {file_path.name}...")
+            # Process each markdown file in the directory
+            for note_path in directory_path.glob(pattern):
                 try:
-                    self.generate_hub_note(file_path)
+                    click.echo(f"\nProcessing {note_path.relative_to(directory_path)}...")
+                    self.parser.parse_file(str(note_path))
+                    parsed_notes = self.parser.parsed_notes
+                    
+                    # Generate hub note
+                    hub_note = self.llm.generate_daily_hub_note(
+                        parsed_notes=parsed_notes,
+                        source_file=str(note_path),
+                        output_dir=Path(self.parser.config['processing']['output_dir']),
+                        vault_path=self.parser.vault_path,
+                        save_markdown=True,
+                        temperature=0.7
+                    )
+                    
+                    # Display preview
+                    click.echo("\nGenerated hub note preview:")
+                    click.echo("=" * 40)
+                    click.echo(hub_note[:500] + "..." if len(hub_note) > 500 else hub_note)
+                    click.echo("=" * 40)
+                    
                 except Exception as e:
-                    click.echo(f"Error processing {file_path.name}: {str(e)}")
+                    click.echo(f"Error processing {note_path}: {str(e)}")
                     continue
                     
-            click.echo("\nFinished processing directory")
-            
         except Exception as e:
             click.echo(f"Error processing directory: {str(e)}")
 
@@ -288,68 +387,88 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
             process_type = process_answer['process_type']
             target_path = None
             
-            if process_type == 'file':
-                # Ask which directory to look in
-                vault_path = Path(cli.parser.config['vault']['path'])
-                directories = [d for d in vault_path.iterdir() if d.is_dir()]
-                dir_choices = [str(d.relative_to(vault_path)) for d in directories]
+            # Initialize with vault path
+            current_dir = Path(cli.parser.config['vault']['path'])
+            
+            while True:  # Navigation loop
+                # List contents of current directory
+                directories = [d for d in current_dir.iterdir() if d.is_dir()]
+                dir_choices = [f"📁 {str(d.relative_to(current_dir))}" for d in directories]
                 
-                dir_question = [
-                    inquirer.List(
-                        'directory',
-                        message="Select directory to look for files:",
-                        choices=dir_choices + ['Cancel'],
-                        carousel=True
-                    )
-                ]
-                
-                dir_answer = inquirer.prompt(dir_question)
-                if not dir_answer or dir_answer['directory'] == 'Cancel':
-                    continue
-                
-                search_dir = vault_path / dir_answer['directory']
-                # Get files in the selected directory
-                files = [f for f in search_dir.iterdir() if f.is_file() and f.suffix == '.md']
-                if not files:
-                    click.echo("No markdown files found in selected directory!")
-                    continue
-                
-                file_choices = [str(f.relative_to(vault_path)) for f in files]
-                file_question = [
-                    inquirer.List(
-                        'file',
-                        message="Select file to process:",
-                        choices=file_choices + ['Cancel'],
-                        carousel=True
-                    )
-                ]
-                
-                file_answer = inquirer.prompt(file_question)
-                if not file_answer or file_answer['file'] == 'Cancel':
-                    continue
-                
-                target_path = vault_path / file_answer['file']
-                
-            elif process_type == 'dir':
-                # Ask which directory to process
-                vault_path = Path(cli.parser.config['vault']['path'])
-                directories = [d for d in vault_path.iterdir() if d.is_dir()]
-                dir_choices = [str(d.relative_to(vault_path)) for d in directories]
-                
-                dir_question = [
-                    inquirer.List(
-                        'directory',
-                        message="Select directory to process:",
-                        choices=dir_choices + ['Cancel'],
-                        carousel=True
-                    )
-                ]
-                
-                dir_answer = inquirer.prompt(dir_question)
-                if not dir_answer or dir_answer['directory'] == 'Cancel':
-                    continue
-                
-                target_path = vault_path / dir_answer['directory']
+                if process_type == 'file':
+                    # For file processing, show both files and directories
+                    files = [f for f in current_dir.iterdir() if f.is_file() and f.suffix == '.md']
+                    file_choices = [f"📄 {str(f.relative_to(current_dir))}" for f in files]
+                    all_choices = dir_choices + file_choices
+                    
+                    if current_dir != Path(cli.parser.config['vault']['path']):
+                        all_choices = ["📁 .."] + all_choices
+                    
+                    all_choices.append("Cancel")
+                    
+                    nav_question = [
+                        inquirer.List(
+                            'selection',
+                            message=f"Current directory: {current_dir.name}\nSelect file or directory:",
+                            choices=all_choices,
+                            carousel=True
+                        )
+                    ]
+                    
+                    nav_answer = inquirer.prompt(nav_question)
+                    if not nav_answer or nav_answer['selection'] == 'Cancel':
+                        break
+                        
+                    selection = nav_answer['selection']
+                    
+                    if selection == "📁 ..":
+                        current_dir = current_dir.parent
+                        continue
+                        
+                    item_name = selection[2:]  # Remove icon prefix
+                    selected_path = current_dir / item_name
+                    
+                    if selected_path.is_dir():
+                        current_dir = selected_path
+                        continue
+                    else:
+                        target_path = selected_path
+                        break
+                        
+                else:  # Directory processing
+                    all_choices = ["Select current directory"]
+                    
+                    if current_dir != Path(cli.parser.config['vault']['path']):
+                        all_choices = ["📁 .."] + all_choices
+                        
+                    all_choices.extend(dir_choices)
+                    all_choices.append("Cancel")
+                    
+                    nav_question = [
+                        inquirer.List(
+                            'selection',
+                            message=f"Current directory: {current_dir.name}\nSelect directory:",
+                            choices=all_choices,
+                            carousel=True
+                        )
+                    ]
+                    
+                    nav_answer = inquirer.prompt(nav_question)
+                    if not nav_answer or nav_answer['selection'] == 'Cancel':
+                        break
+                        
+                    selection = nav_answer['selection']
+                    
+                    if selection == "Select current directory":
+                        target_path = current_dir
+                        break
+                    elif selection == "📁 ..":
+                        current_dir = current_dir.parent
+                        continue
+                    else:
+                        dir_name = selection[2:]  # Remove icon prefix
+                        current_dir = current_dir / dir_name
+                        continue
             
             if target_path:
                 # Choose action for the selected path
@@ -365,6 +484,7 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
                 else:  # is directory
                     choices = [
                         ('Process directory and generate hub notes', 'dir_hub'),
+                        ('Process directory and extract atomic notes', 'dir_atomic'),
                         ('Go back', 'back'),
                         ('Exit', 'exit')
                     ]
@@ -392,6 +512,8 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
                     cli.generate_hub_note(target_path)
                 elif action == 'dir_hub':
                     cli.process_directory_hub_notes(target_path)
+                elif action == 'dir_atomic':
+                    cli.process_directory_atomic_notes(target_path)
                 elif action == 'exit':
                     break
                     
