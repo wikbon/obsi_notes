@@ -267,48 +267,134 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
         cli = NoteCLI(vault_path=vault_path, config_path=config_path)
         
         while True:
-            # Select note
-            note_path = cli.select_note()
-            if not note_path:
-                break
-                
-            # Choose action
-            questions = [
+            # First select process type
+            process_questions = [
                 inquirer.List(
-                    'action',
-                    message=f"What would you like to do with {note_path.name}?",
+                    'process_type',
+                    message="What would you like to process?",
                     choices=[
-                        ('Chat about the note', 'chat'),
-                        ('Extract atomic notes', 'atomic'),
-                        ('Generate hub note', 'hub'),
-                        ('Process directory and generate hub notes', 'dir_hub'),
-                        ('Go back', 'back'),
+                        ('Process directory', 'dir'),
+                        ('Process single file', 'file'),
                         ('Exit', 'exit')
                     ],
                     carousel=True
                 )
             ]
             
-            answers = inquirer.prompt(questions)
-            if not answers:
+            process_answer = inquirer.prompt(process_questions)
+            if not process_answer or process_answer['process_type'] == 'exit':
                 break
                 
-            action = answers['action']
+            process_type = process_answer['process_type']
+            target_path = None
             
-            if action == 'chat':
-                cli.chat_about_note(note_path)
-            elif action == 'atomic':
-                cli.process_atomic_notes(note_path)
-            elif action == 'hub':
-                cli.generate_hub_note(note_path)
-            elif action == 'dir_hub':
-                if note_path.is_dir():
-                    cli.process_directory_hub_notes(note_path)
-                else:
-                    cli.process_directory_hub_notes(note_path.parent)
-            elif action == 'exit':
-                break
+            if process_type == 'file':
+                # Ask which directory to look in
+                vault_path = Path(cli.parser.config['vault']['path'])
+                directories = [d for d in vault_path.iterdir() if d.is_dir()]
+                dir_choices = [str(d.relative_to(vault_path)) for d in directories]
                 
+                dir_question = [
+                    inquirer.List(
+                        'directory',
+                        message="Select directory to look for files:",
+                        choices=dir_choices + ['Cancel'],
+                        carousel=True
+                    )
+                ]
+                
+                dir_answer = inquirer.prompt(dir_question)
+                if not dir_answer or dir_answer['directory'] == 'Cancel':
+                    continue
+                
+                search_dir = vault_path / dir_answer['directory']
+                # Get files in the selected directory
+                files = [f for f in search_dir.iterdir() if f.is_file() and f.suffix == '.md']
+                if not files:
+                    click.echo("No markdown files found in selected directory!")
+                    continue
+                
+                file_choices = [str(f.relative_to(vault_path)) for f in files]
+                file_question = [
+                    inquirer.List(
+                        'file',
+                        message="Select file to process:",
+                        choices=file_choices + ['Cancel'],
+                        carousel=True
+                    )
+                ]
+                
+                file_answer = inquirer.prompt(file_question)
+                if not file_answer or file_answer['file'] == 'Cancel':
+                    continue
+                
+                target_path = vault_path / file_answer['file']
+                
+            elif process_type == 'dir':
+                # Ask which directory to process
+                vault_path = Path(cli.parser.config['vault']['path'])
+                directories = [d for d in vault_path.iterdir() if d.is_dir()]
+                dir_choices = [str(d.relative_to(vault_path)) for d in directories]
+                
+                dir_question = [
+                    inquirer.List(
+                        'directory',
+                        message="Select directory to process:",
+                        choices=dir_choices + ['Cancel'],
+                        carousel=True
+                    )
+                ]
+                
+                dir_answer = inquirer.prompt(dir_question)
+                if not dir_answer or dir_answer['directory'] == 'Cancel':
+                    continue
+                
+                target_path = vault_path / dir_answer['directory']
+            
+            if target_path:
+                # Choose action for the selected path
+                choices = []
+                if target_path.is_file():
+                    choices = [
+                        ('Chat about the note', 'chat'),
+                        ('Extract atomic notes', 'atomic'),
+                        ('Generate hub note', 'hub'),
+                        ('Go back', 'back'),
+                        ('Exit', 'exit')
+                    ]
+                else:  # is directory
+                    choices = [
+                        ('Process directory and generate hub notes', 'dir_hub'),
+                        ('Go back', 'back'),
+                        ('Exit', 'exit')
+                    ]
+                
+                questions = [
+                    inquirer.List(
+                        'action',
+                        message=f"What would you like to do with {target_path.name}?",
+                        choices=choices,
+                        carousel=True
+                    )
+                ]
+                
+                answers = inquirer.prompt(questions)
+                if not answers:
+                    break
+                    
+                action = answers['action']
+                
+                if action == 'chat':
+                    cli.chat_about_note(target_path)
+                elif action == 'atomic':
+                    cli.process_atomic_notes(target_path)
+                elif action == 'hub':
+                    cli.generate_hub_note(target_path)
+                elif action == 'dir_hub':
+                    cli.process_directory_hub_notes(target_path)
+                elif action == 'exit':
+                    break
+                    
     except KeyboardInterrupt:
         click.echo("\nOperation cancelled by user")
     except Exception as e:
