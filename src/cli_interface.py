@@ -9,6 +9,7 @@ import sys
 import logging
 
 from src.core.llm_handler import LLMHandler
+from src.core.deepseek_handler import DeepSeekHandler
 from src.utils.note_parser import NoteParser
 from src.utils.atomic_note_extractor import AtomicNoteExtractor
 
@@ -19,15 +20,16 @@ logger = logging.getLogger(__name__)
 class NoteCLI:
     """CLI interface for interacting with notes."""
     
-    def __init__(self, vault_path: Optional[str] = None, config_path: Optional[str] = None):
+    def __init__(self, vault_path: Optional[str] = None, config_path: Optional[str] = None, use_deepseek: bool = True):
         """Initialize the CLI interface.
         
         Args:
             vault_path: Path to the Obsidian vault
             config_path: Path to config file
+            use_deepseek: Whether to use DeepSeek handler (True) or LLaMA handler (False)
         """
         self.parser = NoteParser(vault_path=vault_path, config_path=config_path)
-        self.llm = LLMHandler(verbose=True)
+        self.llm = DeepSeekHandler(verbose=True) if use_deepseek else LLMHandler(verbose=True)
         self.extractor = AtomicNoteExtractor(
             vault_path=vault_path,
             config_path=config_path,
@@ -350,20 +352,13 @@ class NoteCLI:
             click.echo(f"Error processing directory: {str(e)}")
 
 @click.command()
-@click.option(
-    '--vault-path',
-    type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    help='Path to Obsidian vault'
-)
-@click.option(
-    '--config-path',
-    type=click.Path(exists=True, file_okay=True, dir_okay=False),
-    help='Path to config file'
-)
-def main(vault_path: Optional[str], config_path: Optional[str]):
+@click.option('--vault-path', '-v', type=str, help='Path to Obsidian vault')
+@click.option('--config-path', '-c', type=str, help='Path to config file')
+@click.option('--use-deepseek/--use-llama', default=True, help='Use DeepSeek (default) or LLaMA model')
+def main(vault_path: Optional[str], config_path: Optional[str], use_deepseek: bool):
     """Interactive CLI for working with notes."""
     try:
-        cli = NoteCLI(vault_path=vault_path, config_path=config_path)
+        cli = NoteCLI(vault_path=vault_path, config_path=config_path, use_deepseek=use_deepseek)
         
         while True:
             # First select process type

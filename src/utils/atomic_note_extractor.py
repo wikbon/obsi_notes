@@ -1,10 +1,11 @@
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import json
 import logging
 import click
 
 from src.core.llm_handler import LLMHandler
+from src.core.deepseek_handler import DeepSeekHandler
 from src.utils.note_parser import NoteParser
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,7 +19,7 @@ class AtomicNoteExtractor:
         vault_path: Optional[str] = None,
         config_path: Optional[str] = None,
         verbose: bool = False,
-        llm_handler: Optional[LLMHandler] = None
+        llm_handler: Optional[Union[LLMHandler, DeepSeekHandler]] = None
     ):
         """Initialize the AtomicNoteExtractor.
         
@@ -26,7 +27,7 @@ class AtomicNoteExtractor:
             vault_path (str, optional): Path to the Obsidian vault
             config_path (str, optional): Path to config file
             verbose (bool): Whether to print detailed logs
-            llm_handler (LLMHandler, optional): Existing LLMHandler instance to use
+            llm_handler (Union[LLMHandler, DeepSeekHandler], optional): Existing LLM handler instance to use
         """
         self.parser = NoteParser(vault_path=vault_path, config_path=config_path)
         self.llm_handler = llm_handler if llm_handler else LLMHandler(verbose=verbose)
