@@ -352,3 +352,96 @@ class NoteParser:
             json.dump(export_data, f, ensure_ascii=False, indent=2)
             
         return str(output_path)
+
+    def extract_vault_info(self) -> Dict[str, Any]:
+        """Extract comprehensive information about the vault structure and contents.
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing:
+                - folder_hierarchy: Directory structure and relationships
+                - notes: List of note information (paths, titles, contents)
+                - metadata: Tags, links, and backlinks
+                - hub_notes: Information about HUB notes in Projects and Areas
+        """
+        if not self.vault_path:
+            raise ValueError("No vault path set. Use set_vault_path() first.")
+            
+        vault_info = {
+            'folder_hierarchy': {},
+            'notes': [],
+            'metadata': {
+                'tags': set(),
+                'links': set(),
+                'backlinks': {}
+            },
+            'hub_notes': []
+        }
+        
+        # Build folder hierarchy
+        for path in self.vault_path.rglob('*'):
+            if path.is_dir():
+                relative_path = path.relative_to(self.vault_path)
+                parts = list(relative_path.parts)
+                
+                current_dict = vault_info['folder_hierarchy']
+                for part in parts:
+                    if part not in current_dict:
+                        current_dict[part] = {}
+                    current_dict = current_dict[part]
+        
+        # Process all markdown files
+        for note_path in self.vault_path.rglob('*.md'):
+            relative_path = str(note_path.relative_to(self.vault_path))
+            
+            # Skip processing if file is in excluded directories
+            if any(excluded in relative_path for excluded in ['.git', '.obsidian']):
+                continue
+                
+            self.load_file(str(note_path))
+            
+            # Extract note information
+            note_info = {
+                'path': relative_path,
+                'title': note_path.stem,
+                'frontmatter': self.frontmatter.copy(),
+                'content': self.raw_content
+            }
+            
+            # Extract links
+            link_pattern = r'\[\[(.*?)(?:\|.*?)?\]\]'
+            links = set(re.findall(link_pattern, self.raw_content))
+            note_info['links'] = list(links)
+            vault_info['metadata']['links'].update(links)
+            
+            # Update backlinks
+            for link in links:
+                if link not in vault_info['metadata']['backlinks']:
+                    vault_info['metadata']['backlinks'][link] = []
+                vault_info['metadata']['backlinks'][link].append(relative_path)
+            
+            # Extract tags
+            tags = self.extract_tags(self.raw_content)
+            note_info['tags'] = tags
+            vault_info['metadata']['tags'].update(tags)
+            
+            # Check if it's a HUB note
+            is_hub = (
+                ('type' in self.frontmatter and self.frontmatter['type'].lower() == 'hub') or
+                note_path.stem.lower().endswith('hub') or
+                note_path.stem.lower().startswith('hub')
+            )
+            
+            if is_hub and any(folder in relative_path for folder in ['1_projects', '2_areas']):
+                vault_info['hub_notes'].append({
+                    'path': relative_path,
+                    'title': note_path.stem,
+                    'folder': next(folder for folder in ['1_projects', '2_areas'] if folder in relative_path)
+                })
+            
+            vault_info['notes'].append(note_info)
+        
+        # Convert sets to lists for JSON serialization
+        vault_info['metadata']['tags'] = list(vault_info['metadata']['tags'])
+        vault_info['metadata']['links'] = list(vault_info['metadata']['links'])
+        
+        return vault_info
