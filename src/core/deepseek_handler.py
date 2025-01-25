@@ -591,12 +591,15 @@ Please reason step by step, and put your final markdown within \\boxed{{ }}"""
         }
         
         # Extract existing project and area names from vault info
-        for note in vault_info['hub_notes']:
-            folder = note['folder']
-            if '1_projects' in folder:
-                para_categories['projects'].append(note['title'])
-            elif '2_areas' in folder:
-                para_categories['areas'].append(note['title'])
+        for note in vault_info['all_notes']:
+            folder = note.get('folder')
+            if folder:
+                if '1_projects' in folder:
+                    para_categories['projects'].append(note['title'])
+                elif '2_areas' in folder:
+                    para_categories['areas'].append(note['title'])
+                elif '3_resources' in folder:
+                    para_categories['resources'].append(note['title'])
         
         # Build the system and user prompts
         system_prompt = """You are an AI note organizer specialized in the PARA method (Projects, Areas, Resources, Archive).
@@ -610,6 +613,7 @@ Return your analysis in a structured JSON format."""
 Existing Categories in the Vault:
 Projects: {', '.join(para_categories['projects'])}
 Areas: {', '.join(para_categories['areas'])}
+Resources: {', '.join(para_categories['resources'])}
 
 For each major theme or heading in the note:
 1. Classify it as: Project (time-bound goal), Area (ongoing responsibility), Resource (reference), or Archive (completed/inactive)

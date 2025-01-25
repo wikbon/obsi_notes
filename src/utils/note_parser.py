@@ -361,7 +361,7 @@ class NoteParser:
                 - folder_hierarchy: Directory structure and relationships
                 - notes: List of note information (paths, titles, contents)
                 - metadata: Tags, links, and backlinks
-                - hub_notes: Information about HUB notes in Projects and Areas
+                - all_notes: Information about all notes in the vault
         """
         if not self.vault_path:
             raise ValueError("No vault path set. Use set_vault_path() first.")
@@ -374,7 +374,7 @@ class NoteParser:
                 'links': set(),
                 'backlinks': {}
             },
-            'hub_notes': []
+            'all_notes': []
         }
         
         # Build folder hierarchy
@@ -394,7 +394,7 @@ class NoteParser:
             relative_path = str(note_path.relative_to(self.vault_path))
             
             # Skip processing if file is in excluded directories
-            if any(excluded in relative_path for excluded in ['.git', '.obsidian']):
+            if any(excluded in relative_path for excluded in ['.git', '.obsidian', '0_daily', 'processed']):
                 continue
                 
             self.load_file(str(note_path))
@@ -424,19 +424,14 @@ class NoteParser:
             note_info['tags'] = tags
             vault_info['metadata']['tags'].update(tags)
             
-            # Check if it's a HUB note
-            is_hub = (
-                ('type' in self.frontmatter and self.frontmatter['type'].lower() == 'hub') or
-                note_path.stem.lower().endswith('hub') or
-                note_path.stem.lower().startswith('hub')
-            )
-            
-            if is_hub and any(folder in relative_path for folder in ['1_projects', '2_areas']):
-                vault_info['hub_notes'].append({
-                    'path': relative_path,
-                    'title': note_path.stem,
-                    'folder': next(folder for folder in ['1_projects', '2_areas'] if folder in relative_path)
-                })
+            # Add note to all_notes list
+            vault_info['all_notes'].append({
+                'path': relative_path,
+                'title': note_path.stem,
+                'folder': next((folder for folder in ['1_projects', '2_areas', '3_resources'] if folder in relative_path), None),
+                'content': self.raw_content,
+                'frontmatter': self.frontmatter.copy()
+            })
             
             vault_info['notes'].append(note_info)
         
