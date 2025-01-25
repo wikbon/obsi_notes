@@ -1,67 +1,40 @@
-from llama_cpp import Llama
-from typing import Optional, Dict, Any, List
-import logging
+import requests
 import json
+import logging
 import re
+from typing import List, Dict, Any, Optional
 from pathlib import Path
-import click
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class DeepSeekHandler:
-    """Handler for DeepSeek-R1 model interactions."""
+class LMStudioHandler:
+    """Handler for LM Studio API interactions."""
 
     CHAT_TEMPLATE = "<｜begin▁of▁sentence｜>{system_prompt}<｜User｜>{prompt}<｜Assistant｜>"
     BOXED_PATTERN = r"\\boxed\{([^}]+)\}"
 
-    def __init__(
-        self,
-        model_path: str = "/path/to/DeepSeek-R1-Distill-Llama-8B-Q8_0.gguf",
-        n_gpu_layers: int = -1,
-        n_ctx: int = 8192,
-        verbose: bool = False
-    ):
-        """Initialize the DeepSeek handler.
+    def __init__(self, verbose: bool = False):
+        """Initialize the LM Studio handler.
         
         Args:
-            model_path: Path to the GGUF model file. For split models, provide path to first part
-            n_gpu_layers: Number of layers to offload to GPU
-            n_ctx: Context window size
             verbose: Whether to print detailed logs
         """
-        self.model_path = model_path
         self.verbose = verbose
-        if verbose:
-            logger.info(f"Initializing DeepSeek with model: {model_path}")
-        
-        # Handle split model files
-        if "-00001-of-" in model_path:
-            base_path = Path(model_path).parent
-            model_prefix = model_path.split("-00001-of-")[0]
-            if verbose:
-                logger.info(f"Detected split model. Using base path: {base_path}")
-                logger.info(f"Model prefix: {model_prefix}")
-            
-        self.llm = Llama(
-            model_path=model_path,
-            n_gpu_layers=n_gpu_layers,
-            n_ctx=n_ctx
-        )
+        self.base_url = "http://127.0.0.1:1234/v1"
         self.message_history: List[Dict[str, str]] = []
         
         if verbose:
-            logger.info("DeepSeek model initialized successfully")
+            logger.info("Initializing LM Studio handler")
     
     def add_message(self, role: str, content: str) -> None:
         """Add a message to the chat history.
         
         Args:
-            role: Role of the message sender (e.g., 'user', 'assistant')
+            role: Role of the message sender (system/user/assistant)
             content: Content of the message
         """
-        message = {"role": role, "content": content}
-        self.message_history.append(message)
+        self.message_history.append({"role": role, "content": content})
         if self.verbose:
             logger.info(f"Added message - Role: {role}")
             logger.info(f"Content: {content}")
@@ -81,7 +54,7 @@ class DeepSeekHandler:
         return self.message_history
 
     def _format_prompt(self, messages: List[Dict[str, str]]) -> str:
-        """Format messages according to DeepSeek chat template.
+        """Format messages according to LM Studio chat template.
         
         Args:
             messages: List of message dictionaries
@@ -89,8 +62,6 @@ class DeepSeekHandler:
         Returns:
             Formatted prompt string
         """
-        # DeepSeek doesn't use system prompts, so we'll combine any system messages
-        # into the user prompt
         system_parts = []
         user_parts = []
         
@@ -99,19 +70,17 @@ class DeepSeekHandler:
                 system_parts.append(msg["content"])
             elif msg["role"] == "user":
                 user_parts.append(msg["content"])
-            # We don't include assistant messages as we're formatting for a new response
 
         system_prompt = " ".join(system_parts)
         user_prompt = " ".join(user_parts)
         
-        # Format using DeepSeek template
         return self.CHAT_TEMPLATE.format(
             system_prompt=system_prompt,
             prompt=user_prompt
         )
 
     def _extract_boxed_content(self, text: str) -> Optional[str]:
-        """Extract content from \\boxed{} if present.
+        """Extract content from \boxed{} if present.
         
         Args:
             text: Text to extract from
@@ -131,118 +100,139 @@ class DeepSeekHandler:
         Returns:
             Cleaned text with think blocks removed
         """
-        # Remove <think> blocks
         text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-        # Remove any leftover empty lines
         text = re.sub(r'\n\s*\n', '\n\n', text)
         return text.strip()
 
     def create_chat_completion(
         self,
         messages: Optional[List[Dict[str, str]]] = None,
-        temperature: float = 0.6,
+        temperature: float = 0.7,
+        stream: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
-        """Create a chat completion using the DeepSeek model.
+        """Create a chat completion using the LM Studio API.
         
         Args:
             messages: List of message dictionaries with 'role' and 'content'.
                      If None, uses internal message history.
-            temperature: Sampling temperature (recommended 0.6 for DeepSeek)
-            **kwargs: Additional arguments to pass to create_completion
+            temperature: Sampling temperature
+            stream: Whether to stream the response
+            **kwargs: Additional arguments
             
         Returns:
-            Dict containing the chat completion response with extracted boxed content
+            Dict containing the chat completion response
         """
         if messages is None:
             messages = self.message_history
-            
-        prompt = self._format_prompt(messages)
         
-        if self.verbose:
-            logger.info(f"Sending prompt to DeepSeek: {prompt}")
-            
-        completion = self.llm.create_completion(
-            prompt=prompt,
-            temperature=temperature,
-            **kwargs
-        )
-        
-        response_text = completion["choices"][0]["text"]
-        # Clean think blocks from response
-        response_text = self._clean_think_blocks(response_text)
-        boxed_content = self._extract_boxed_content(response_text)
-        if boxed_content:
-            boxed_content = self._clean_think_blocks(boxed_content)
-        
-        response = {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": response_text
-                },
-                "boxed_content": boxed_content
-            }]
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "model": "your-lmstudio-model-id",  # Model ID
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": -1,
+            "stream": stream
         }
         
-        # Add response to history
-        self.add_message("assistant", response_text)
-        
-        return response
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=data,
+                stream=stream
+            )
+            response.raise_for_status()
+            
+            if stream:
+                full_response = ""
+                for line in response.iter_lines():
+                    if line:
+                        if line.startswith(b"data: "):
+                            try:
+                                json_str = line[6:].decode('utf-8')
+                                if json_str.strip() == "[DONE]":
+                                    break
+                                chunk = json.loads(json_str)
+                                if chunk.get("choices") and chunk["choices"][0].get("delta", {}).get("content"):
+                                    content = chunk["choices"][0]["delta"]["content"]
+                                    full_response += content
+                                    if self.verbose:
+                                        print(content, end="", flush=True)
+                            except json.JSONDecodeError:
+                                continue
+                return {"choices": [{"message": {"role": "assistant", "content": full_response}}]}
+            else:
+                response_json = response.json()
+                content = response_json["choices"][0]["message"]["content"]
+                self.add_message("assistant", content)
+                return {"choices": [{"message": {"role": "assistant", "content": content}}]}
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error communicating with LM Studio: {str(e)}")
+            return {"error": str(e)}
 
     def create_chat_completion_no_history(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0.6,
+        temperature: float = 0.7,
         **kwargs
     ) -> Dict[str, Any]:
-        """Create a chat completion using the DeepSeek model without affecting message history.
+        """Create a chat completion using the LM Studio API without affecting message history.
         
         Args:
             messages: List of message dictionaries with 'role' and 'content'.
-            temperature: Sampling temperature (recommended 0.6 for DeepSeek)
-            **kwargs: Additional arguments to pass to create_completion
+            temperature: Sampling temperature
+            **kwargs: Additional arguments
             
         Returns:
-            Dict containing the chat completion response with extracted boxed content
+            Dict containing the chat completion response
         """
-        prompt = self._format_prompt(messages)
-        
-        if self.verbose:
-            logger.info(f"Sending prompt to DeepSeek: {prompt}")
-            
-        completion = self.llm.create_completion(
-            prompt=prompt,
-            temperature=temperature,
-            **kwargs
-        )
-        
-        response_text = completion["choices"][0]["text"]
-        # Clean think blocks from response
-        response_text = self._clean_think_blocks(response_text)
-        boxed_content = self._extract_boxed_content(response_text)
-        if boxed_content:
-            boxed_content = self._clean_think_blocks(boxed_content)
-        
-        response = {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": response_text
-                },
-                "boxed_content": boxed_content
-            }]
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "model": "your-lmstudio-model-id",  # Model ID
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": -1,
+            "stream": False
         }
         
-        return response
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=data
+            )
+            response.raise_for_status()
+            
+            response_json = response.json()
+            content = response_json["choices"][0]["message"]["content"]
+            content = self._clean_think_blocks(content)
+            boxed_content = self._extract_boxed_content(content)
+            if boxed_content:
+                boxed_content = self._clean_think_blocks(boxed_content)
+            
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": content
+                    },
+                    "boxed_content": boxed_content
+                }]
+            }
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error communicating with LM Studio: {str(e)}")
+            return {"error": str(e)}
 
     def extract_atomic_notes(
         self, 
         note_segments: List[Dict[str, Any]], 
-        temperature: float = 0.6
+        temperature: float = 0.7
     ) -> List[Dict[str, Any]]:
         """
-        Extract atomic notes from each segment using the DeepSeek model.
+        Extract atomic notes from each segment using the LM Studio API.
         
         Args:
             note_segments (List[Dict[str, Any]]):
@@ -262,7 +252,6 @@ class DeepSeekHandler:
             content = segment["content"]
             timestamp = segment.get("timestamp", "")
             
-            # Build the system and user messages
             system_prompt = (
                 "You are an assistant specialized in note summarization and extraction. "
                 "Your task is to extract atomic notes and return them in JSON format. "
@@ -290,52 +279,38 @@ Return a JSON array in this exact format (no markdown, no explanation):
   }}
 ]"""
             
-            # Use the LLM
-            if self.verbose:
-                logger.info(f"Processing segment{f' from {timestamp}' if timestamp else ''}")
-                
-            response = self.create_chat_completion_no_history(
+            response = self.create_chat_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=temperature,
-                max_tokens=4050,  # adjust as needed
+                stream=False
             )
             
-            # Get the raw response
             raw_assistant_message = ""
             if response.get("choices"):
                 raw_assistant_message = response["choices"][0]["message"]["content"]
-                # Clean think blocks
                 raw_assistant_message = self._clean_think_blocks(raw_assistant_message)
  
-            # Attempt to parse JSON
             try:
-                # Preprocess input to remove BOM and strip whitespace
                 raw_assistant_message = raw_assistant_message.lstrip("\ufeff").strip()
                 
-                # Remove triple backticks with `json` marker if present
                 if raw_assistant_message.startswith("```json") and raw_assistant_message.endswith("```"):
                     raw_assistant_message = raw_assistant_message[7:-3].strip()
                 elif raw_assistant_message.startswith("```") and raw_assistant_message.endswith("```"):
                     raw_assistant_message = raw_assistant_message[3:-3].strip()
-                # Remove trailing commas inside objects
                 raw_assistant_message = re.sub(r",\s*}", "}", raw_assistant_message)
 
-                # Validate JSON structure before parsing
                 if not raw_assistant_message.startswith(("{", "[")):
                     logger.error("Input does not appear to be valid JSON.")
-                    return []  # Return empty list instead of None
+                    return []
                 
-                # Parse JSON   
                 extracted_list = json.loads(raw_assistant_message)
                 
-                # If it's not a list, wrap it in a list for uniformity
                 if not isinstance(extracted_list, list):
                     extracted_list = [extracted_list]
                     
-                # Print each extracted note to CLI
                 for note in extracted_list:
                     note_text = note.get("note", "")
                     click.echo(f"\nOriginal input to LLM:\n{content}\n")
@@ -357,7 +332,7 @@ Return a JSON array in this exact format (no markdown, no explanation):
         parsed_notes: List[Dict[str, Any]],
         source_file: str,
         date_str: str = None,
-        temperature: float = 0.6,
+        temperature: float = 0.7,
         save_markdown: bool = True,
         output_dir: Optional[Path] = None,
         vault_path: Optional[Path] = None
@@ -370,7 +345,7 @@ Return a JSON array in this exact format (no markdown, no explanation):
                                                'timestamp' and 'content' keys.
             source_file (str): Path to the source file being processed
             date_str (str, optional): The date string for the note. If None, will be extracted from filename
-            temperature (float): LLM creativity level (default: 0.6).
+            temperature (float): LLM creativity level.
             save_markdown (bool): Whether to save the generated markdown to a file
             output_dir (Path, optional): Directory to save output files. Required if save_markdown is True
             vault_path (Path, optional): Path to the vault root. Required if save_markdown is True
@@ -378,16 +353,14 @@ Return a JSON array in this exact format (no markdown, no explanation):
         Returns:
             str: A formatted Markdown string containing the organized daily hub note.
         """
-        # Extract date from filename if not provided
         if date_str is None:
             source_path = Path(source_file)
             parts = source_path.stem.split('-')
             if len(parts) >= 3:
-                date_str = f"{parts[0]}-{parts[1]}-{parts[2]}"  # Combines YYYY-MM-DD
+                date_str = f"{parts[0]}-{parts[1]}-{parts[2]}"
             else:
-                date_str = source_path.stem  # Fallback to full stem if not in expected format
+                date_str = source_path.stem
             
-        # Format notes for the prompt
         lines_for_prompt = []
         for note in parsed_notes:
             timestamp = note.get('timestamp', 'N/A')
@@ -396,7 +369,6 @@ Return a JSON array in this exact format (no markdown, no explanation):
             
         combined_text = "\n".join(lines_for_prompt)
         
-        # Create system and user prompts
         system_prompt = (
             "You are an assistant that organizes daily mind dumps into a nicely formatted "
             "Markdown document, complete with headings, subheadings, summaries, and an Action Items list."
@@ -458,9 +430,8 @@ Important Formatting Guidelines:
 
 Note: Original timestamps should be removed from the final note while preserving the logical flow of ideas.
 
-Please reason step by step, and put your final markdown within \\boxed{{ }}"""
+Please reason step by step, and put your final markdown within \boxed{{ }}"""
         
-        # Call the LLM
         if self.verbose:
             logger.info(f"Generating hub note for {date_str}")
             
@@ -470,44 +441,37 @@ Please reason step by step, and put your final markdown within \\boxed{{ }}"""
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
-            max_tokens=4096,
+            stream=False
         )
         
-        # Extract the Markdown content
         if response.get("choices") and len(response["choices"]) > 0:
             markdown_result = response["choices"][0]["message"]["content"]
             boxed_content = response["choices"][0].get("boxed_content")
             if boxed_content:
                 markdown_result = boxed_content
-            # Clean think blocks
             markdown_result = self._clean_think_blocks(markdown_result)
-            # Remove wrapping markdown code block if present
             if markdown_result.startswith("```markdown\n"):
-                markdown_result = markdown_result[11:]  # Remove ```markdown\n
+                markdown_result = markdown_result[11:]
             elif markdown_result.startswith("```\n"):
-                markdown_result = markdown_result[4:]  # Remove ```\n
+                markdown_result = markdown_result[4:]
             if markdown_result.endswith("\n```"):
-                markdown_result = markdown_result[:-4]  # Remove \n```
+                markdown_result = markdown_result[:-4]
             markdown_result = markdown_result.strip()
         else:
             markdown_result = f"# Daily Note - {date_str}\n\n*(No response from LLM)*"
             if self.verbose:
                 logger.error("Failed to get response from LLM")
         
-        # Save markdown if requested
         if save_markdown:
             if output_dir is None or vault_path is None:
                 raise ValueError("output_dir and vault_path must be provided when save_markdown is True")
                 
             source_path = Path(source_file)
-            # Get relative path from vault root and construct output path
             rel_path = source_path.relative_to(vault_path)
             output_path = output_dir / rel_path.with_suffix('.hub.md')
             
-            # Ensure output directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Write markdown file
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(markdown_result)
                 
@@ -521,7 +485,6 @@ Please reason step by step, and put your final markdown within \\boxed{{ }}"""
         Clear the chat history for the current LLM session.
         This can be useful to reset context between different tasks.
         """
-        if hasattr(self, '_chat_history'):
-            self._chat_history = []
+        self.message_history = []
         if self.verbose:
             logger.info("Chat history cleared")

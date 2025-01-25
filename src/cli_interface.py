@@ -8,34 +8,85 @@ from datetime import datetime
 import sys
 import logging
 
-from src.core.llm_handler import LLMHandler
 from src.core.deepseek_handler import DeepSeekHandler
+from src.core.lmstudio_handler import LMStudioHandler
 from src.utils.note_parser import NoteParser
 from src.utils.atomic_note_extractor import AtomicNoteExtractor
+from src.utils.flashcard_generator import FlashcardGenerator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Model configurations for llama-cpp-python implementation
+MODELS = {
+    'DeepSeek-Llama-8B': {
+        'path': "/path/to/DeepSeek-R1-Distill-Llama-8B-Q8_0.gguf",
+        'n_gpu_layers': -1,
+        'n_ctx': 8192
+    },
+    'DeepSeek-Qwen-32B': {
+        'path': "/path/to/DeepSeek-R1-Distill-Qwen-32B-Q6_K_L.gguf",
+        'n_gpu_layers': 15,
+        'n_ctx': 8192
+    },
+    'DeepSeek-Llama-70B': {
+        'path': "/path/to/DeepSeek-R1-Distill-Llama-70B.gguf",
+        'n_gpu_layers': 10,
+        'n_ctx': 8192
+    }
+}
+
 class NoteCLI:
     """CLI interface for interacting with notes."""
     
-    def __init__(self, vault_path: Optional[str] = None, config_path: Optional[str] = None, use_deepseek: bool = True):
+    def __init__(self, vault_path: Optional[str] = None, config_path: Optional[str] = None):
         """Initialize the CLI interface.
         
         Args:
             vault_path: Path to the Obsidian vault
             config_path: Path to config file
-            use_deepseek: Whether to use DeepSeek handler (True) or LLaMA handler (False)
         """
+        # First select implementation
+        impl_questions = [
+            inquirer.List('implementation',
+                        message="Select the LLM implementation to use:",
+                        choices=['llama-cpp-python', 'LM Studio'],
+                        carousel=True)
+        ]
+        impl_answers = inquirer.prompt(impl_questions)
+        selected_impl = impl_answers['implementation']
+        
+        if selected_impl == 'llama-cpp-python':
+            # Ask user to select model
+            questions = [
+                inquirer.List('model',
+                            message="Select the model to use:",
+                            choices=list(MODELS.keys()))
+            ]
+            answers = inquirer.prompt(questions)
+            selected_model = answers['model']
+            model_config = MODELS[selected_model]
+            
+            logger.info(f"Initializing with llama-cpp-python model: {selected_model}")
+            self.llm = DeepSeekHandler(
+                model_path=model_config['path'],
+                n_gpu_layers=model_config['n_gpu_layers'],
+                n_ctx=model_config['n_ctx'],
+                verbose=True
+            )
+        else:
+            logger.info("Initializing with LM Studio")
+            self.llm = LMStudioHandler(verbose=True)
+        
         self.parser = NoteParser(vault_path=vault_path, config_path=config_path)
-        self.llm = DeepSeekHandler(verbose=True) if use_deepseek else LLMHandler(verbose=True)
         self.extractor = AtomicNoteExtractor(
             vault_path=vault_path,
             config_path=config_path,
             verbose=True,
             llm_handler=self.llm
         )
+        self.flashcard_generator = FlashcardGenerator(llm_handler=self.llm)
         
     def get_daily_notes(self) -> List[Path]:
         """Get list of daily notes sorted by date.
@@ -351,14 +402,87 @@ class NoteCLI:
         except Exception as e:
             click.echo(f"Error processing directory: {str(e)}")
 
+    def process_note(self, note_path: Path) -> None:
+        """Process a single note file."""
+        questions = [
+            inquirer.List('action',
+                         message="What would you like to do with this note?",
+                         choices=[
+                             'Extract atomic notes',
+                             'Generate flashcards',
+                             'Generate hub note',
+                             'Chat about the note',
+                             'Skip'
+                         ])
+        ]
+        
+        answers = inquirer.prompt(questions)
+        if answers['action'] == 'Extract atomic notes':
+            self.process_atomic_notes(note_path)
+        elif answers['action'] == 'Generate flashcards':
+            self.flashcard_generator.generate_flashcards(note_path)
+        elif answers['action'] == 'Generate hub note':
+            self.generate_hub_note(note_path)
+        elif answers['action'] == 'Chat about the note':
+            self.chat_about_note(note_path)
+
+    def process_directory_flashcards(self, directory_path: Path) -> None:
+        """Process all markdown files in a directory and generate flashcards.
+        
+        Args:
+            directory_path: Path to the directory containing notes
+        """
+        click.echo(f"\nProcessing directory and generating flashcards: {directory_path}")
+        
+        try:
+            # Ask for recursive processing
+            questions = [
+                inquirer.List(
+                    'recursive',
+                    message="Process subdirectories recursively?",
+                    choices=[
+                        ('Yes', True),
+                        ('No', False)
+                    ],
+                    carousel=True
+                )
+            ]
+            
+            answers = inquirer.prompt(questions)
+            if not answers:
+                return
+                
+            recursive = answers['recursive']
+            pattern = "**/*.md" if recursive else "*.md"
+            
+            # Process each markdown file in the directory
+            note_paths = []
+            for note_path in directory_path.glob(pattern):
+                if not note_path.name.endswith('_flashcards.md'):  # Skip existing flashcard files
+                    note_paths.append(note_path)
+            
+            if not note_paths:
+                click.echo("No markdown files found to process.")
+                return
+                
+            # Generate flashcards for all notes
+            generated_files = self.flashcard_generator.batch_generate_flashcards(note_paths)
+            
+            # Display summary
+            click.echo(f"\nGenerated {len(generated_files)} flashcard files:")
+            for file_path in generated_files:
+                click.echo(f"- {file_path}")
+                
+        except Exception as e:
+            click.echo(f"Error processing directory: {str(e)}")
+
 @click.command()
 @click.option('--vault-path', '-v', type=str, help='Path to Obsidian vault')
 @click.option('--config-path', '-c', type=str, help='Path to config file')
-@click.option('--use-deepseek/--use-llama', default=True, help='Use DeepSeek (default) or LLaMA model')
-def main(vault_path: Optional[str], config_path: Optional[str], use_deepseek: bool):
+def main(vault_path: Optional[str], config_path: Optional[str]):
     """Interactive CLI for working with notes."""
     try:
-        cli = NoteCLI(vault_path=vault_path, config_path=config_path, use_deepseek=use_deepseek)
+        cli = NoteCLI(vault_path=vault_path, config_path=config_path)
         
         while True:
             # First select process type
@@ -467,50 +591,40 @@ def main(vault_path: Optional[str], config_path: Optional[str], use_deepseek: bo
             
             if target_path:
                 # Choose action for the selected path
-                choices = []
                 if target_path.is_file():
-                    choices = [
-                        ('Chat about the note', 'chat'),
-                        ('Extract atomic notes', 'atomic'),
-                        ('Generate hub note', 'hub'),
-                        ('Go back', 'back'),
-                        ('Exit', 'exit')
-                    ]
-                else:  # is directory
+                    cli.process_note(target_path)
+                else:
                     choices = [
                         ('Process directory and generate hub notes', 'dir_hub'),
                         ('Process directory and extract atomic notes', 'dir_atomic'),
+                        ('Process directory and generate flashcards', 'dir_flashcards'),
                         ('Go back', 'back'),
                         ('Exit', 'exit')
                     ]
-                
-                questions = [
-                    inquirer.List(
-                        'action',
-                        message=f"What would you like to do with {target_path.name}?",
-                        choices=choices,
-                        carousel=True
-                    )
-                ]
-                
-                answers = inquirer.prompt(questions)
-                if not answers:
-                    break
                     
-                action = answers['action']
-                
-                if action == 'chat':
-                    cli.chat_about_note(target_path)
-                elif action == 'atomic':
-                    cli.process_atomic_notes(target_path)
-                elif action == 'hub':
-                    cli.generate_hub_note(target_path)
-                elif action == 'dir_hub':
-                    cli.process_directory_hub_notes(target_path)
-                elif action == 'dir_atomic':
-                    cli.process_directory_atomic_notes(target_path)
-                elif action == 'exit':
-                    break
+                    questions = [
+                        inquirer.List(
+                            'action',
+                            message=f"What would you like to do with {target_path.name}?",
+                            choices=choices,
+                            carousel=True
+                        )
+                    ]
+                    
+                    answers = inquirer.prompt(questions)
+                    if not answers:
+                        break
+                        
+                    action = answers['action']
+                    
+                    if action == 'dir_hub':
+                        cli.process_directory_hub_notes(target_path)
+                    elif action == 'dir_atomic':
+                        cli.process_directory_atomic_notes(target_path)
+                    elif action == 'dir_flashcards':
+                        cli.process_directory_flashcards(target_path)
+                    elif action == 'exit':
+                        break
                     
     except KeyboardInterrupt:
         click.echo("\nOperation cancelled by user")
