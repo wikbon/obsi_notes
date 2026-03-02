@@ -10,32 +10,20 @@ import logging
 
 from src.core.deepseek_handler import DeepSeekHandler
 from src.core.lmstudio_handler import LMStudioHandler
+from src.core.openai_handler import OpenAIHandler
 from src.utils.note_parser import NoteParser
 from src.utils.atomic_note_extractor import AtomicNoteExtractor
 from src.utils.flashcard_generator import FlashcardGenerator
+from src.utils.helpers import should_skip_file, generate_frontmatter
+from src.config.settings import ConfigManager
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Model configurations for llama-cpp-python implementation
-MODELS = {
-    'DeepSeek-Llama-8B': {
-        'path': "/path/to/DeepSeek-R1-Distill-Llama-8B-Q8_0.gguf",
-        'n_gpu_layers': -1,
-        'n_ctx': 8192
-    },
-    'DeepSeek-Qwen-32B': {
-        'path': "/path/to/DeepSeek-R1-Distill-Qwen-32B-Q6_K_L.gguf",
-        'n_gpu_layers': 15,
-        'n_ctx': 8192
-    },
-    'DeepSeek-Llama-70B': {
-        'path': "/path/to/DeepSeek-R1-Distill-Llama-70B.gguf",
-        'n_gpu_layers': 10,
-        'n_ctx': 8192
-    }
-}
+# Load model configurations from config
+_config_manager = ConfigManager()
+MODELS = _config_manager.get_models()
 
 class NoteCLI:
     """CLI interface for interacting with notes."""
@@ -51,7 +39,7 @@ class NoteCLI:
         impl_questions = [
             inquirer.List('implementation',
                         message="Select the LLM implementation to use:",
-                        choices=['llama-cpp-python', 'LM Studio'],
+                        choices=['llama-cpp-python', 'LM Studio', 'OpenAI (gpt-5.2)'],
                         carousel=True)
         ]
         impl_answers = inquirer.prompt(impl_questions)
@@ -67,7 +55,7 @@ class NoteCLI:
             answers = inquirer.prompt(questions)
             selected_model = answers['model']
             model_config = MODELS[selected_model]
-            
+
             logger.info(f"Initializing with llama-cpp-python model: {selected_model}")
             self.llm = DeepSeekHandler(
                 model_path=model_config['path'],
@@ -75,9 +63,12 @@ class NoteCLI:
                 n_ctx=model_config['n_ctx'],
                 verbose=True
             )
-        else:
+        elif selected_impl == 'LM Studio':
             logger.info("Initializing with LM Studio")
             self.llm = LMStudioHandler(verbose=True)
+        else:
+            logger.info("Initializing with OpenAI (gpt-5.2)")
+            self.llm = OpenAIHandler(verbose=True)
         
         self.parser = NoteParser(vault_path=vault_path, config_path=config_path)
         self.extractor = AtomicNoteExtractor(
@@ -157,16 +148,8 @@ class NoteCLI:
         
         click.echo("\nStarting chat session about the note. Type 'exit' to end.\n")
         
-        system_prompt = (
-            "You are an AI assistant helping to analyze and discuss notes. "
-            "The user will ask questions about a note, and you should provide "
-            "helpful, concise responses. When asked to analyze or summarize, "
-            "please provide a structured response with main points and key ideas."
-        )
-        
         # Initialize chat with the note content
         self.llm.clear_history()
-        self.llm.add_message("system", system_prompt)
         
         # Add the note content as user context
         context_message = f"Here is the note I want to discuss:\n\n{content}"
@@ -374,11 +357,14 @@ class NoteCLI:
             
             # Process each markdown file in the directory
             for note_path in directory_path.glob(pattern):
+                if should_skip_file(note_path.name):
+                    click.echo(f"  Skipping already-processed: {note_path.name}")
+                    continue
                 try:
                     click.echo(f"\nProcessing {note_path.relative_to(directory_path)}...")
                     self.parser.parse_file(str(note_path))
                     parsed_notes = self.parser.parsed_notes
-                    
+
                     # Generate hub note
                     hub_note = self.llm.generate_daily_hub_note(
                         parsed_notes=parsed_notes,
@@ -402,6 +388,60 @@ class NoteCLI:
         except Exception as e:
             click.echo(f"Error processing directory: {str(e)}")
 
+    def process_format_note(self, note_path: Path) -> None:
+        """Format a raw note into well-structured markdown.
+
+        Args:
+            note_path: Path to the note file
+        """
+        click.echo(f"\nFormatting note: {note_path.name}...")
+
+        try:
+            raw_content = note_path.read_text(encoding='utf-8')
+            formatted = self.llm.format_note(raw_content, temperature=0.3)
+
+            frontmatter = generate_frontmatter(note_path.stem, 'format')
+            output_path = note_path.parent / f"{note_path.stem}_formatted.md"
+            output_path.write_text(frontmatter + formatted, encoding='utf-8')
+
+            click.echo(f"Formatted note saved to: {output_path}")
+            click.echo("\nPreview:")
+            click.echo("=" * 40)
+            click.echo(formatted[:500] + "..." if len(formatted) > 500 else formatted)
+            click.echo("=" * 40)
+        except Exception as e:
+            click.echo(f"Error formatting note: {str(e)}")
+
+    def process_format_and_flashcards(self, note_path: Path) -> None:
+        """Format a note and generate flashcards in a single output file.
+
+        Args:
+            note_path: Path to the note file
+        """
+        click.echo(f"\nProcessing format + flashcards for: {note_path.name}...")
+
+        try:
+            raw_content = note_path.read_text(encoding='utf-8')
+
+            # Format the note
+            click.echo("  Formatting note...")
+            formatted = self.llm.format_note(raw_content, temperature=0.3)
+
+            # Generate flashcards from the raw content
+            click.echo("  Generating flashcards...")
+            flashcards = self.flashcard_generator.generate_flashcards_content(raw_content)
+
+            # Combine into a single output file
+            frontmatter = generate_frontmatter(note_path.stem, 'both')
+            combined = f"{frontmatter}{formatted}\n\n---\n\n# Flashcards\n\n{flashcards}"
+
+            output_path = note_path.parent / f"{note_path.stem}_processed.md"
+            output_path.write_text(combined, encoding='utf-8')
+
+            click.echo(f"Processed note saved to: {output_path}")
+        except Exception as e:
+            click.echo(f"Error processing note: {str(e)}")
+
     def process_note(self, note_path: Path) -> None:
         """Process a single note file."""
         questions = [
@@ -410,17 +450,23 @@ class NoteCLI:
                          choices=[
                              'Extract atomic notes',
                              'Generate flashcards',
+                             'Format notes',
+                             'Format + Flashcards (both)',
                              'Generate hub note',
                              'Chat about the note',
                              'Skip'
                          ])
         ]
-        
+
         answers = inquirer.prompt(questions)
         if answers['action'] == 'Extract atomic notes':
             self.process_atomic_notes(note_path)
         elif answers['action'] == 'Generate flashcards':
             self.flashcard_generator.generate_flashcards(note_path)
+        elif answers['action'] == 'Format notes':
+            self.process_format_note(note_path)
+        elif answers['action'] == 'Format + Flashcards (both)':
+            self.process_format_and_flashcards(note_path)
         elif answers['action'] == 'Generate hub note':
             self.generate_hub_note(note_path)
         elif answers['action'] == 'Chat about the note':
@@ -458,7 +504,7 @@ class NoteCLI:
             # Process each markdown file in the directory
             note_paths = []
             for note_path in directory_path.glob(pattern):
-                if not note_path.name.endswith('_flashcards.md'):  # Skip existing flashcard files
+                if not should_skip_file(note_path.name):
                     note_paths.append(note_path)
             
             if not note_paths:
@@ -475,6 +521,110 @@ class NoteCLI:
                 
         except Exception as e:
             click.echo(f"Error processing directory: {str(e)}")
+
+    def process_directory_format_notes(self, directory_path: Path) -> None:
+        """Format all markdown files in a directory.
+
+        Args:
+            directory_path: Path to the directory containing notes
+        """
+        click.echo(f"\nFormatting notes in directory: {directory_path}")
+
+        try:
+            questions = [
+                inquirer.List(
+                    'recursive',
+                    message="Process subdirectories recursively?",
+                    choices=[('Yes', True), ('No', False)],
+                    carousel=True
+                )
+            ]
+            answers = inquirer.prompt(questions)
+            if not answers:
+                return
+
+            recursive = answers['recursive']
+            pattern = "**/*.md" if recursive else "*.md"
+
+            processed = 0
+            for note_path in directory_path.glob(pattern):
+                if should_skip_file(note_path.name):
+                    click.echo(f"  Skipping already-processed: {note_path.name}")
+                    continue
+                try:
+                    click.echo(f"\nFormatting {note_path.name}...")
+                    raw_content = note_path.read_text(encoding='utf-8')
+                    formatted = self.llm.format_note(raw_content, temperature=0.3)
+
+                    frontmatter = generate_frontmatter(note_path.stem, 'format')
+                    output_path = note_path.parent / f"{note_path.stem}_formatted.md"
+                    output_path.write_text(frontmatter + formatted, encoding='utf-8')
+
+                    click.echo(f"  Saved: {output_path.name}")
+                    processed += 1
+                except Exception as e:
+                    click.echo(f"  Error formatting {note_path.name}: {str(e)}")
+                    continue
+
+            click.echo(f"\nFormatted {processed} notes.")
+        except Exception as e:
+            click.echo(f"Error processing directory: {str(e)}")
+
+    def process_directory_both(self, directory_path: Path) -> None:
+        """Format + generate flashcards for all markdown files in a directory.
+
+        Args:
+            directory_path: Path to the directory containing notes
+        """
+        click.echo(f"\nProcessing format + flashcards in directory: {directory_path}")
+
+        try:
+            questions = [
+                inquirer.List(
+                    'recursive',
+                    message="Process subdirectories recursively?",
+                    choices=[('Yes', True), ('No', False)],
+                    carousel=True
+                )
+            ]
+            answers = inquirer.prompt(questions)
+            if not answers:
+                return
+
+            recursive = answers['recursive']
+            pattern = "**/*.md" if recursive else "*.md"
+
+            processed = 0
+            for note_path in directory_path.glob(pattern):
+                if should_skip_file(note_path.name):
+                    click.echo(f"  Skipping already-processed: {note_path.name}")
+                    continue
+                try:
+                    click.echo(f"\nProcessing {note_path.name}...")
+                    raw_content = note_path.read_text(encoding='utf-8')
+
+                    click.echo("  Formatting...")
+                    formatted = self.llm.format_note(raw_content, temperature=0.3)
+
+                    click.echo("  Generating flashcards...")
+                    flashcards = self.flashcard_generator.generate_flashcards_content(raw_content)
+
+                    frontmatter = generate_frontmatter(note_path.stem, 'both')
+                    combined = f"{frontmatter}{formatted}\n\n---\n\n# Flashcards\n\n{flashcards}"
+
+                    output_path = note_path.parent / f"{note_path.stem}_processed.md"
+                    output_path.write_text(combined, encoding='utf-8')
+
+                    click.echo(f"  Saved: {output_path.name}")
+                    processed += 1
+                except Exception as e:
+                    click.echo(f"  Error processing {note_path.name}: {str(e)}")
+                    continue
+
+            click.echo(f"\nProcessed {processed} notes (format + flashcards).")
+        except Exception as e:
+            click.echo(f"Error processing directory: {str(e)}")
+
 
 @click.command()
 @click.option('--vault-path', '-v', type=str, help='Path to Obsidian vault')
@@ -598,6 +748,8 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
                         ('Process directory and generate hub notes', 'dir_hub'),
                         ('Process directory and extract atomic notes', 'dir_atomic'),
                         ('Process directory and generate flashcards', 'dir_flashcards'),
+                        ('Process directory and format notes', 'dir_format'),
+                        ('Process directory - Format + Flashcards', 'dir_both'),
                         ('Go back', 'back'),
                         ('Exit', 'exit')
                     ]
@@ -623,6 +775,10 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
                         cli.process_directory_atomic_notes(target_path)
                     elif action == 'dir_flashcards':
                         cli.process_directory_flashcards(target_path)
+                    elif action == 'dir_format':
+                        cli.process_directory_format_notes(target_path)
+                    elif action == 'dir_both':
+                        cli.process_directory_both(target_path)
                     elif action == 'exit':
                         break
                     

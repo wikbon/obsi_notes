@@ -11,7 +11,10 @@ dependencies = [
     "click",
     "inquirer",
     "llama-cpp-python",
-    "pyyaml"
+    "openai",
+    "python-dotenv",
+    "pyyaml",
+    "requests",
 ]
 
 [tool.hatch.build.targets.wheel]

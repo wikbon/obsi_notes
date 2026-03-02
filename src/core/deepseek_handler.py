@@ -91,22 +91,18 @@ class DeepSeekHandler:
         """
         # DeepSeek doesn't use system prompts, so we'll combine any system messages
         # into the user prompt
-        system_parts = []
         user_parts = []
         
         for msg in messages:
-            if msg["role"] == "system":
-                system_parts.append(msg["content"])
-            elif msg["role"] == "user":
+            if msg["role"] == "system" or msg["role"] == "user":
                 user_parts.append(msg["content"])
             # We don't include assistant messages as we're formatting for a new response
 
-        system_prompt = " ".join(system_parts)
         user_prompt = " ".join(user_parts)
         
         # Format using DeepSeek template
         return self.CHAT_TEMPLATE.format(
-            system_prompt=system_prompt,
+            system_prompt='',
             prompt=user_prompt
         )
 
@@ -263,32 +259,29 @@ class DeepSeekHandler:
             timestamp = segment.get("timestamp", "")
             
             # Build the system and user messages
-            system_prompt = (
+            user_prompt = (
                 "You are an assistant specialized in note summarization and extraction. "
                 "Your task is to extract atomic notes and return them in JSON format. "
                 "An atomic note should capture one complete, self-contained idea - "
                 "don't split related concepts that form a single coherent thought. "
                 "DO NOT include any markdown formatting or explanation text. "
                 "Return ONLY the raw JSON array."
+                f"Here is a raw note segment{f' (timestamp: {timestamp})' if timestamp else ''}:\n"
+                f"{content}\n"
+                "Extract atomic notes following these rules:\n"
+                "1. Each note should be one complete, self-contained idea.\n"
+                "2. Keep related concepts together if they form a single coherent thought.\n"
+                "3. Don't split definitions or explanations of a single concept.\n"
+                "4. If multiple sentences make up a single idea, keep them together as a single atomic note.\n"
+                "5. If in doubt, don't split a sentence into multiple atomic notes.\n"
+                "\n"
+                "Return a JSON array in this exact format (no markdown, no explanation):\n"
+                "[\n"
+                "  {\n"
+                '    "note": "the complete atomic idea here",\n'
+                "  }\n"
+                "]"
             )
-            
-            user_prompt = f"""Here is a raw note segment{f' (timestamp: {timestamp})' if timestamp else ''}:
-
-{content}
-
-Extract atomic notes following these rules:
-1. Each note should be one complete, self-contained idea.
-2. Keep related concepts together if they form a single coherent thought.
-3. Don't split definitions or explanations of a single concept.
-4. If multiple sentences make up a single idea, keep them together as a single atomic note.
-5. If in doubt, don't split a sentence into multiple atomic notes.
-
-Return a JSON array in this exact format (no markdown, no explanation):
-[
-  {{
-    "note": "the complete atomic idea here",
-  }}
-]"""
             
             # Use the LLM
             if self.verbose:
@@ -296,7 +289,6 @@ Return a JSON array in this exact format (no markdown, no explanation):
                 
             response = self.create_chat_completion_no_history(
                 messages=[
-                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=temperature,
@@ -396,69 +388,64 @@ Return a JSON array in this exact format (no markdown, no explanation):
             
         combined_text = "\n".join(lines_for_prompt)
         
-        # Create system and user prompts
-        system_prompt = (
+        # Create user prompt
+        user_prompt = (
             "You are an assistant that organizes daily mind dumps into a nicely formatted "
             "Markdown document, complete with headings, subheadings, summaries, and an Action Items list."
+            f"Here is a list of timestamped notes for {date_str}:\n"
+            f"{combined_text}\n"
+            "Please transform this note into a well-structured daily note using the following guidelines:\n"
+            "1) Create a clear hierarchical structure with appropriate headings (# for main, ## for sections, ### for subsections)\n"
+            "2) Organize related thoughts and ideas under common themes or categories\n"
+            "3) Enhance readability by:\n"
+            "   - Breaking long paragraphs into concise bullet points\n"
+            "   - Using consistent formatting for similar types of information\n"
+            "   - Adding clear transitions between different topics\n"
+            "4) Include the following sections:\n"
+            "   - Daily Overview (brief summary of main activities/thoughts)\n"
+            "   - Key Insights or Learnings\n"
+            "   - Project Updates (if applicable)\n"
+            "   - Questions & Ideas for Further Exploration\n"
+            "   - Action Items & Next Steps\n"
+            "\n"
+            "The final note should follow this structure:\n"
+            f"# Daily Note - {date_str}\n"
+            "\n"
+            "## Daily Overview\n"
+            "(A concise summary of the day's main activities and focus areas)\n"
+            "\n"
+            "## Key Topics\n"
+            "(Major themes or areas of focus from the notes, organized into clear sections)\n"
+            "\n"
+            "### Topic A\n"
+            "- Main points and insights\n"
+            "- Supporting details or examples\n"
+            "- Related thoughts and connections\n"
+            "\n"
+            "### Topic B\n"
+            "(Similar structure as Topic A)\n"
+            "\n"
+            "## Questions & Ideas\n"
+            "- Open questions that arose\n"
+            "- Ideas for future exploration\n"
+            "- Potential connections to investigate\n"
+            "\n"
+            "## Action Items\n"
+            "- [ ] Specific tasks or next steps\n"
+            "- [ ] Follow-up items\n"
+            "- [ ] Reminders for future reference\n"
+            "\n"
+            "Important Formatting Guidelines:\n"
+            "1) Use consistent bullet points for lists\n"
+            "2) Keep paragraphs concise and focused\n"
+            "3) Use bold or italic text sparingly and purposefully\n"
+            "4) Include cross-references to related notes where relevant\n"
+            "5) Remove any redundant information or unnecessary details\n"
+            "\n"
+            "Note: Original timestamps should be removed from the final note while preserving the logical flow of ideas.\n"
+            "\n"
+            "Please reason step by step, and put your final markdown within \\boxed{{ }}"
         )
-        
-        user_prompt = f"""Here is a list of timestamped notes for {date_str}:
-
-{combined_text}
-
-Please transform this note into a well-structured daily note using the following guidelines:
-
-1) Create a clear hierarchical structure with appropriate headings (# for main, ## for sections, ### for subsections)
-2) Organize related thoughts and ideas under common themes or categories
-3) Enhance readability by:
-   - Breaking long paragraphs into concise bullet points
-   - Using consistent formatting for similar types of information
-   - Adding clear transitions between different topics
-4) Include the following sections:
-   - Daily Overview (brief summary of main activities/thoughts)
-   - Key Insights or Learnings
-   - Project Updates (if applicable)
-   - Questions & Ideas for Further Exploration
-   - Action Items & Next Steps
-
-The final note should follow this structure:
-
-# Daily Note - {date_str}
-
-## Daily Overview
-(A concise summary of the day's main activities and focus areas)
-
-## Key Topics
-(Major themes or areas of focus from the notes, organized into clear sections)
-
-### Topic A
-- Main points and insights
-- Supporting details or examples
-- Related thoughts and connections
-
-### Topic B
-(Similar structure as Topic A)
-
-## Questions & Ideas
-- Open questions that arose
-- Ideas for future exploration
-- Potential connections to investigate
-
-## Action Items
-- [ ] Specific tasks or next steps
-- [ ] Follow-up items
-- [ ] Reminders for future reference
-
-Important Formatting Guidelines:
-1) Use consistent bullet points for lists
-2) Keep paragraphs concise and focused
-3) Use bold or italic text sparingly and purposefully
-4) Include cross-references to related notes where relevant
-5) Remove any redundant information or unnecessary details
-
-Note: Original timestamps should be removed from the final note while preserving the logical flow of ideas.
-
-Please reason step by step, and put your final markdown within \\boxed{{ }}"""
         
         # Call the LLM
         if self.verbose:
@@ -466,7 +453,6 @@ Please reason step by step, and put your final markdown within \\boxed{{ }}"""
             
         response = self.create_chat_completion_no_history(
             messages=[
-                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
@@ -515,6 +501,50 @@ Please reason step by step, and put your final markdown within \\boxed{{ }}"""
                 logger.info(f"Saved hub note to {output_path}")
         
         return markdown_result
+
+    def format_note(self, raw_content: str, temperature: float = 0.3) -> str:
+        """Format raw notes into well-structured markdown.
+
+        Args:
+            raw_content: Raw note text to format
+            temperature: Sampling temperature (low for consistency)
+
+        Returns:
+            Formatted markdown string
+        """
+        format_prompt = (
+            "You are a highly skilled assistant designed to process raw notes into a "
+            "well-structured Markdown format. Your task:\n\n"
+            "Reorganize and combine information:\n"
+            "    Analyze the provided text and organize it into logical sections.\n"
+            "    Combine related points, move information as necessary, and ensure the content flows logically.\n"
+            "    Format the notes using appropriate headings, subheadings, and bullet points.\n"
+            "    Make sure to respect the specific wording and examples used by user in raw notes.\n"
+            "    Do not talk about anything else, just format the notes.\n"
+            "    Your task is to clean up, fix typos, fix transcription errors and organize. "
+            "DON'T rephrase or rewrite using different words.\n"
+            '    Do not include "```markdown" or "```" in the output.\n\n'
+            "Output format:\n\n"
+            "<well-organized notes>"
+        )
+
+        response = self.create_chat_completion_no_history(
+            messages=[
+                {"role": "system", "content": format_prompt},
+                {"role": "user", "content": raw_content},
+            ],
+            temperature=temperature,
+            max_tokens=4096,
+        )
+
+        result = response["choices"][0]["message"]["content"]
+        if result.startswith("```markdown\n"):
+            result = result[11:]
+        elif result.startswith("```\n"):
+            result = result[4:]
+        if result.endswith("\n```"):
+            result = result[:-4]
+        return result.strip()
 
     def clear_chat_history(self) -> None:
         """

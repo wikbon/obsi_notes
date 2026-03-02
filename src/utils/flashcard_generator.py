@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import List, Dict, Optional
 import logging
-from src.core.deepseek_handler import DeepSeekHandler
+from src.utils.helpers import generate_frontmatter
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 class FlashcardGenerator:
     """Generates Obsidian-compatible flashcards for spaced repetition."""
 
-    def __init__(self, llm_handler: DeepSeekHandler):
+    def __init__(self, llm_handler):
         """Initialize the flashcard generator.
-        
+
         Args:
-            llm_handler: Instance of DeepSeekHandler for generating flashcards
+            llm_handler: LLM handler instance (DeepSeek, LMStudio, or OpenAI)
         """
         self.llm = llm_handler
 
@@ -126,13 +126,87 @@ class FlashcardGenerator:
         )
         flashcard_content = response["choices"][0]["message"]["content"]
         
-        # Create flashcards file
-        flashcard_content = f"---\ntags: [{deck_tag}]\n---\n\n{flashcard_content}"
+        # Create flashcards file with proper frontmatter
+        frontmatter = generate_frontmatter(note_path.stem, 'flashcards')
+        flashcard_content = frontmatter + flashcard_content
         flashcard_path = note_path.parent / f"{note_path.stem}_flashcards.md"
         flashcard_path.write_text(flashcard_content, encoding='utf-8')
-        
+
         logger.info(f"Generated flashcards at: {flashcard_path}")
         return str(flashcard_path)
+
+    def generate_flashcards_content(self, note_content: str, deck_tag: str = "#flashcard") -> str:
+        """Generate flashcard text content without saving to file.
+
+        Args:
+            note_content: Raw note text to generate flashcards from
+            deck_tag: Tag for the flashcard deck
+
+        Returns:
+            Flashcard content string (without frontmatter)
+        """
+        system_prompt = self._get_flashcard_prompt()
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Create flashcards from this note:\n\n{note_content}"}
+        ]
+        response = self.llm.create_chat_completion_no_history(
+            messages,
+            max_tokens=4050,
+        )
+        return response["choices"][0]["message"]["content"]
+
+    def _get_flashcard_prompt(self) -> str:
+        """Return the flashcard generation system prompt."""
+        return """
+        Create spaced repetition flashcards from the given note content. Follow these rules:
+        1. Extract key concepts and create question-answer pairs
+        2. Use :: for single-line basic cards
+        3. Use ::: for single-line bidirectional cards when appropriate
+        6. Each card should test one specific concept
+        7. Questions should be clear and unambiguous
+        8. Answers should be concise but complete
+        9. Don't use markdown in questions or answers
+        10. Structure each line as a simple text
+
+        For single line cards, the question and answer should be separated by a double colon (::). the question and the answer should be on the same line:
+        Question :: Answer
+
+        For multi-line cards, the question and answer should be separated by a question mark (?). the question and the answer should be on separate lines:
+        Question
+        ?
+        Answer
+
+        it's important to have question mark (?) or (??) for multi-line cards on a separate line between the Question and Answer.
+
+        Examples:
+
+        === Single-line Basic Cards (::) ===
+        What is the capital of France? :: Paris
+        What is the chemical symbol for Gold? :: Au
+
+        === Single-line Bidirectional Cards (:::) ===
+        Photosynthesis ::: Process where plants convert sunlight into chemical energy
+        Bonjour ::: Hello in French
+
+        === Multi-line Basic Cards (?) ===
+        What are the main components of a computer?
+        ?
+        CPU (Central Processing Unit)
+        RAM (Random Access Memory)
+        Storage (HDD/SSD)
+        Motherboard
+        Power Supply Unit
+
+        === Multi-line Bidirectional Cards (??) ===
+        Python List Methods
+        ??
+        append() adds element to end
+        pop() removes and returns last element
+        extend() adds elements from iterable
+        insert() adds element at specific index
+        """
 
     def batch_generate_flashcards(self, note_paths: List[Path], deck_tag: str = "#flashcard") -> List[str]:
         """Generate flashcards for multiple notes.
