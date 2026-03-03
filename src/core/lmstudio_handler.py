@@ -17,16 +17,22 @@ class LMStudioHandler:
 
     def __init__(self, verbose: bool = False):
         """Initialize the LM Studio handler.
-        
+
         Args:
             verbose: Whether to print detailed logs
         """
         self.verbose = verbose
-        self.base_url = "http://127.0.0.1:1234/v1"
+
+        from src.config.settings import ConfigManager
+        config = ConfigManager()
+        lmstudio_settings = config.get_lmstudio_settings()
+        self.base_url = lmstudio_settings['base_url']
+        self.model_id = lmstudio_settings['model_id']
+
         self.message_history: List[Dict[str, str]] = []
-        
+
         if verbose:
-            logger.info("Initializing LM Studio handler")
+            logger.info(f"Initializing LM Studio handler (url={self.base_url})")
     
     def add_message(self, role: str, content: str) -> None:
         """Add a message to the chat history.
@@ -127,7 +133,7 @@ class LMStudioHandler:
         
         headers = {"Content-Type": "application/json"}
         data = {
-            "model": "your-lmstudio-model-id",  # Model ID
+            "model": self.model_id,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": -1,
@@ -189,7 +195,7 @@ class LMStudioHandler:
         """
         headers = {"Content-Type": "application/json"}
         data = {
-            "model": "your-lmstudio-model-id",  # Model ID
+            "model": self.model_id,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": -1,

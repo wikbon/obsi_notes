@@ -2,45 +2,30 @@ import os
 from typing import List, Dict, Optional, Union, Any
 from datetime import datetime
 import re
-import yaml
 import json
 from pathlib import Path
 
+from src.config.settings import ConfigManager
+
+
 class NoteParser:
     """A class to handle loading and parsing of raw notes for LLM processing."""
-    
+
     def __init__(self, vault_path: str = None, file_path: str = None, config_path: str = None):
         """Initialize the NoteParser with optional vault and file paths.
-        
+
         Args:
             vault_path (str, optional): Path to the Obsidian vault
             file_path (str, optional): Path to the specific note file to be parsed
             config_path (str, optional): Path to config file, defaults to standard location
         """
-        self.config = self._load_config(config_path)
-        self.vault_path = Path(vault_path) if vault_path else Path(self.config['vault']['path'])
+        self._config_manager = ConfigManager(config_path=config_path)
+        self.config = self._config_manager.config
+        self.vault_path = Path(vault_path) if vault_path else Path(self._config_manager.get_vault_path())
         self.file_path = Path(file_path) if file_path else None
         self.raw_content = None
         self.parsed_notes = []
         self.frontmatter = {}
-        
-    def _load_config(self, config_path: Optional[str] = None) -> dict:
-        """Load configuration from YAML file.
-        
-        Args:
-            config_path (str, optional): Path to config file
-            
-        Returns:
-            dict: Configuration dictionary
-        """
-        if not config_path:
-            config_path = Path(__file__).parent.parent / "config" / "config.yaml"
-            
-        try:
-            with open(config_path, 'r') as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            raise ValueError(f"Error loading config: {e}")
         
     def set_vault_path(self, vault_path: str) -> None:
         """Set the Obsidian vault path.
@@ -333,8 +318,9 @@ class NoteParser:
             rel_path = self.file_path.relative_to(self.vault_path)
             
             # Construct output path in configured directory
-            output_dir = Path(self.config['processing']['output_dir'])
-            output_path = output_dir / rel_path.with_suffix(self.config['processing']['json_extension'])
+            processing = self._config_manager.get_processing_settings()
+            output_dir = Path(processing['output_dir'])
+            output_path = output_dir / rel_path.with_suffix(processing.get('json_extension', '.json'))
             
         # Create export data structure
         export_data = {

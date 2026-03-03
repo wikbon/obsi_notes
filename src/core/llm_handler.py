@@ -15,17 +15,14 @@ class LLMHandler:
 
     def __init__(
         self,
-        # model_path: str = "/path/to/Yi-1.5-34B-Chat-Q6_K.gguf",
-        model_path: str = "/path/to/granite-3.1-8b-instruct-Q6_K_L.gguf",
-        # model_path: str = "/path/to/DeepSeek-R1-Distill-Llama-8B-Q8_0.gguf",
-
+        model_path: str = "",
         n_gpu_layers: int = -1,
         n_ctx: int = 8192,
         chat_format: str = "chatml-function-calling",
         verbose: bool = False
     ):
         """Initialize the LLM handler.
-        
+
         Args:
             model_path: Path to the GGUF model file
             n_gpu_layers: Number of layers to offload to GPU
@@ -33,6 +30,11 @@ class LLMHandler:
             chat_format: Format for chat interactions
             verbose: Whether to print detailed logs
         """
+        if not model_path:
+            raise ValueError(
+                "model_path is required. Configure model paths via environment "
+                "variables or in config.yaml under the models section."
+            )
         self.model_path = model_path
         self.verbose = verbose
         if verbose:

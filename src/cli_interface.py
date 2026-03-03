@@ -311,7 +311,7 @@ class NoteCLI:
             hub_note = self.llm.generate_daily_hub_note(
                 parsed_notes=parsed_notes,
                 source_file=str(note_path),
-                output_dir=Path(self.parser.config['processing']['output_dir']),
+                output_dir=Path(_config_manager.get_output_dir()),
                 vault_path=self.parser.vault_path,
                 save_markdown=True,
                 temperature=0.7
@@ -369,7 +369,7 @@ class NoteCLI:
                     hub_note = self.llm.generate_daily_hub_note(
                         parsed_notes=parsed_notes,
                         source_file=str(note_path),
-                        output_dir=Path(self.parser.config['processing']['output_dir']),
+                        output_dir=Path(_config_manager.get_output_dir()),
                         vault_path=self.parser.vault_path,
                         save_markdown=True,
                         temperature=0.7
@@ -657,7 +657,7 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
             target_path = None
             
             # Initialize with vault path
-            current_dir = Path(cli.parser.config['vault']['path'])
+            current_dir = Path(_config_manager.get_vault_path())
             
             while True:  # Navigation loop
                 # List contents of current directory
@@ -670,7 +670,7 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
                     file_choices = [f"📄 {str(f.relative_to(current_dir))}" for f in files]
                     all_choices = dir_choices + file_choices
                     
-                    if current_dir != Path(cli.parser.config['vault']['path']):
+                    if current_dir != Path(_config_manager.get_vault_path()):
                         all_choices = ["📁 .."] + all_choices
                     
                     all_choices.append("Cancel")
@@ -707,7 +707,7 @@ def main(vault_path: Optional[str], config_path: Optional[str]):
                 else:  # Directory processing
                     all_choices = ["Select current directory"]
                     
-                    if current_dir != Path(cli.parser.config['vault']['path']):
+                    if current_dir != Path(_config_manager.get_vault_path()):
                         all_choices = ["📁 .."] + all_choices
                         
                     all_choices.extend(dir_choices)

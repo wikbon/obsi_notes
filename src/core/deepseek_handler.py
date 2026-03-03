@@ -17,19 +17,24 @@ class DeepSeekHandler:
 
     def __init__(
         self,
-        model_path: str = "/path/to/DeepSeek-R1-Distill-Llama-8B-Q8_0.gguf",
+        model_path: str = "",
         n_gpu_layers: int = -1,
         n_ctx: int = 8192,
         verbose: bool = False
     ):
         """Initialize the DeepSeek handler.
-        
+
         Args:
             model_path: Path to the GGUF model file. For split models, provide path to first part
             n_gpu_layers: Number of layers to offload to GPU
             n_ctx: Context window size
             verbose: Whether to print detailed logs
         """
+        if not model_path:
+            raise ValueError(
+                "model_path is required. Set DEEPSEEK_LLAMA_8B_PATH env var "
+                "or configure models.DeepSeek-Llama-8B.path in config.yaml"
+            )
         self.model_path = model_path
         self.verbose = verbose
         if verbose:

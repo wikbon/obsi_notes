@@ -1,11 +1,12 @@
 # Obsidian vault configuration
+# Paths can be overridden via environment variables (see .env.example)
 vault:
-  path: "/path/to/your/obsidian/vault"
+  path: ""  # Set OBSIDIAN_VAULT_PATH env var
   default_note_extension: ".md"
 
 # Processing configuration
 processing:
-  output_dir: "/path/to/your/obsidian/vault/processed"
+  output_dir: ""  # Set OBSIDIAN_OUTPUT_DIR env var (default: vault_path/processed)
   json_extension: ".json"
 
 # File handling settings
@@ -34,17 +35,23 @@ local_llm:
   max_tokens: 4096
   n_ctx: 8192
 
+# LM Studio settings
+lmstudio:
+  base_url: ""  # Set LMSTUDIO_BASE_URL env var (default: http://127.0.0.1:1234/v1)
+  model_id: ""  # Set LMSTUDIO_MODEL_ID env var
+
 # Model configurations for llama-cpp-python
+# Paths should be set via env vars: DEEPSEEK_LLAMA_8B_PATH, DEEPSEEK_QWEN_32B_PATH, DEEPSEEK_LLAMA_70B_PATH
 models:
   DeepSeek-Llama-8B:
-    path: "/path/to/DeepSeek-R1-Distill-Llama-8B-Q8_0.gguf"
+    path: ""
     n_gpu_layers: -1
     n_ctx: 8192
   DeepSeek-Qwen-32B:
-    path: "/path/to/DeepSeek-R1-Distill-Qwen-32B-Q6_K_L.gguf"
+    path: ""
     n_gpu_layers: 15
     n_ctx: 8192
   DeepSeek-Llama-70B:
-    path: "/path/to/DeepSeek-R1-Distill-Llama-70B.gguf"
+    path: ""
     n_gpu_layers: 10
     n_ctx: 8192

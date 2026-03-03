@@ -1,6 +1,41 @@
-venv
-.venv
-__pycache__
-*.pyc
+# Environment and secrets
 .env
-.pytest_cache
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files (prevent accidental commit of large binaries)
+*.gguf
+*.bin
+
+# Processed outputs
+processed/
+*.atomic.json
+*_flashcards.md
+*_hub.md
+*_formatted.md
+*_processed.md
