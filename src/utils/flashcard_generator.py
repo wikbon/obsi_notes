@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
-from pathlib import Path
-from typing import List, Dict, Optional
 import logging
+from pathlib import Path
+from typing import List
+
 from src.utils.helpers import generate_frontmatter
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
 
 class FlashcardGenerator:
     """Generates Obsidian-compatible flashcards for spaced repetition."""
@@ -21,17 +23,17 @@ class FlashcardGenerator:
 
     def generate_flashcards(self, note_path: Path, deck_tag: str = "#flashcard") -> str:
         """Generate flashcards from a note and save them next to the original file.
-        
+
         Args:
             note_path: Path to the original note file
             deck_tag: Tag to assign flashcards to a specific deck
-        
+
         Returns:
             Path to the generated flashcards file
         """
         # Read the original note
-        note_content = note_path.read_text(encoding='utf-8')
-        
+        note_content = note_path.read_text(encoding="utf-8")
+
         # Prepare system prompt for the LLM
         system_prompt = """
         Create spaced repetition flashcards from the given note content. Follow these rules:
@@ -114,23 +116,23 @@ class FlashcardGenerator:
         Liquid has fixed volume but takes container shape
         Gas has no fixed shape or volume
         """
-        
+
         # Generate flashcards using LLM
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Create flashcards from this note:\n\n{note_content}"}
+            {"role": "user", "content": f"Create flashcards from this note:\n\n{note_content}"},
         ]
         response = self.llm.create_chat_completion_no_history(
             messages,
-            max_tokens=4050  # Limit response length for flashcards
+            max_tokens=4050,  # Limit response length for flashcards
         )
         flashcard_content = response["choices"][0]["message"]["content"]
-        
+
         # Create flashcards file with proper frontmatter
-        frontmatter = generate_frontmatter(note_path.stem, 'flashcards')
+        frontmatter = generate_frontmatter(note_path.stem, "flashcards")
         flashcard_content = frontmatter + flashcard_content
         flashcard_path = note_path.parent / f"{note_path.stem}_flashcards.md"
-        flashcard_path.write_text(flashcard_content, encoding='utf-8')
+        flashcard_path.write_text(flashcard_content, encoding="utf-8")
 
         logger.info(f"Generated flashcards at: {flashcard_path}")
         return str(flashcard_path)
@@ -149,7 +151,7 @@ class FlashcardGenerator:
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Create flashcards from this note:\n\n{note_content}"}
+            {"role": "user", "content": f"Create flashcards from this note:\n\n{note_content}"},
         ]
         response = self.llm.create_chat_completion_no_history(
             messages,
@@ -208,13 +210,15 @@ class FlashcardGenerator:
         insert() adds element at specific index
         """
 
-    def batch_generate_flashcards(self, note_paths: List[Path], deck_tag: str = "#flashcard") -> List[str]:
+    def batch_generate_flashcards(
+        self, note_paths: List[Path], deck_tag: str = "#flashcard"
+    ) -> List[str]:
         """Generate flashcards for multiple notes.
-        
+
         Args:
             note_paths: List of paths to note files
             deck_tag: Tag to assign flashcards to a specific deck
-        
+
         Returns:
             List of paths to generated flashcard files
         """

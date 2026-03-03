@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-SKIP_SUFFIXES = ('_processed', '_formatted', '_flashcards', '_hub', '_atomic')
+SKIP_SUFFIXES = ("_processed", "_formatted", "_flashcards", "_hub", "_atomic")
 
 
 def generate_frontmatter(original_stem: str, process_type: str) -> str:
@@ -15,17 +15,17 @@ def generate_frontmatter(original_stem: str, process_type: str) -> str:
     Returns:
         YAML frontmatter string including opening/closing ---
     """
-    tags = ['processed']
-    if process_type == 'flashcards':
-        tags.append('flashcards')
-    elif process_type == 'format':
-        tags.append('formatted_notes')
-    elif process_type == 'hub':
-        tags.append('hub_note')
-    elif process_type == 'atomic':
-        tags.append('atomic_notes')
-    elif process_type == 'both':
-        tags.extend(['formatted_notes', 'flashcards'])
+    tags = ["processed"]
+    if process_type == "flashcards":
+        tags.append("flashcards")
+    elif process_type == "format":
+        tags.append("formatted_notes")
+    elif process_type == "hub":
+        tags.append("hub_note")
+    elif process_type == "atomic":
+        tags.append("atomic_notes")
+    elif process_type == "both":
+        tags.extend(["formatted_notes", "flashcards"])
 
     tag_lines = "\n".join(f"  - {tag}" for tag in tags)
     return f'---\noriginal_note: "[[{original_stem}]]"\ntags:\n{tag_lines}\n---\n\n'

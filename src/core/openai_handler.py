@@ -1,18 +1,19 @@
 """OpenAI handler using the modern Responses API."""
 
-import os
-import logging
 import json
+import logging
+import os
 import re
-from typing import Optional, Dict, Any, List
 from pathlib import Path
-from openai import OpenAI
-from dotenv import load_dotenv
+from typing import Any, Dict, List, Optional
+
 import click
+from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 FORMAT_NOTE_PROMPT = (
@@ -53,15 +54,16 @@ class OpenAIHandler:
 
         # Load config for defaults
         from src.config.settings import ConfigManager
+
         config = ConfigManager()
         openai_settings = config.get_openai_settings()
 
-        self.model = model or openai_settings.get('default_model', 'gpt-5.2-latest')
-        self.default_temp = openai_settings.get('temperature', 0.7)
-        self.default_max_output_tokens = openai_settings.get('max_output_tokens', 4096)
+        self.model = model or openai_settings.get("default_model", "gpt-5.2-latest")
+        self.default_temp = openai_settings.get("temperature", 0.7)
+        self.default_max_output_tokens = openai_settings.get("max_output_tokens", 4096)
         self.instructions = openai_settings.get(
-            'instructions',
-            'You are a helpful assistant specialized in processing and analyzing notes.'
+            "instructions",
+            "You are a helpful assistant specialized in processing and analyzing notes.",
         )
 
         self.message_history: List[Dict[str, str]] = []
@@ -97,10 +99,12 @@ class OpenAIHandler:
             role = msg["role"]
             if role == "system":
                 continue  # system messages handled via instructions param
-            input_items.append({
-                "role": role,
-                "content": msg["content"],
-            })
+            input_items.append(
+                {
+                    "role": role,
+                    "content": msg["content"],
+                }
+            )
         return input_items
 
     def _extract_instructions(self, messages: List[Dict[str, str]]) -> str:
@@ -162,7 +166,7 @@ class OpenAIHandler:
 
             if self.verbose:
                 logger.info(f"Response received (id={response.id}, status={response.status})")
-                if hasattr(response, 'usage') and response.usage:
+                if hasattr(response, "usage") and response.usage:
                     logger.info(
                         f"Tokens: input={response.usage.input_tokens}, "
                         f"output={response.usage.output_tokens}"
@@ -170,32 +174,33 @@ class OpenAIHandler:
 
             # Return in handler-compatible format
             return {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": output_text,
-                    },
-                    "boxed_content": None,
-                }]
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": output_text,
+                        },
+                        "boxed_content": None,
+                    }
+                ]
             }
 
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
             return {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": f"Error: {e}",
-                    },
-                    "boxed_content": None,
-                }]
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": f"Error: {e}",
+                        },
+                        "boxed_content": None,
+                    }
+                ]
             }
 
     def create_chat_completion(
-        self,
-        messages: Optional[List[Dict[str, str]]] = None,
-        temperature: float = None,
-        **kwargs
+        self, messages: Optional[List[Dict[str, str]]] = None, temperature: float = None, **kwargs
     ) -> Dict[str, Any]:
         """Create a chat completion using the OpenAI Responses API.
 
@@ -212,7 +217,7 @@ class OpenAIHandler:
         if messages is None:
             messages = self.message_history
 
-        max_tokens = kwargs.pop('max_tokens', None)
+        max_tokens = kwargs.pop("max_tokens", None)
 
         response = self._call_responses_api(
             messages=messages,
@@ -228,10 +233,7 @@ class OpenAIHandler:
         return response
 
     def create_chat_completion_no_history(
-        self,
-        messages: List[Dict[str, str]],
-        temperature: float = None,
-        **kwargs
+        self, messages: List[Dict[str, str]], temperature: float = None, **kwargs
     ) -> Dict[str, Any]:
         """Create a chat completion without affecting message history.
 
@@ -243,7 +245,7 @@ class OpenAIHandler:
         Returns:
             Dict with choices[0].message.content
         """
-        max_tokens = kwargs.pop('max_tokens', None)
+        max_tokens = kwargs.pop("max_tokens", None)
 
         return self._call_responses_api(
             messages=messages,
@@ -336,7 +338,9 @@ class OpenAIHandler:
                     logger.info(f"Extracted {len(extracted_list)} atomic notes")
 
             except json.JSONDecodeError:
-                logger.error(f"JSON parse error for segment{f' at {timestamp}' if timestamp else ''}")
+                logger.error(
+                    f"JSON parse error for segment{f' at {timestamp}' if timestamp else ''}"
+                )
                 logger.error(f"Raw response:\n{raw_text}\n")
 
         return all_extracted_notes
@@ -367,7 +371,7 @@ class OpenAIHandler:
         """
         if date_str is None:
             source_path = Path(source_file)
-            parts = source_path.stem.split('-')
+            parts = source_path.stem.split("-")
             if len(parts) >= 3:
                 date_str = f"{parts[0]}-{parts[1]}-{parts[2]}"
             else:
@@ -375,8 +379,8 @@ class OpenAIHandler:
 
         lines_for_prompt = []
         for note in parsed_notes:
-            timestamp = note.get('timestamp', 'N/A')
-            content = note.get('content', '')
+            timestamp = note.get("timestamp", "N/A")
+            content = note.get("content", "")
             lines_for_prompt.append(f"- Timestamp: {timestamp} | Content: {content}")
 
         combined_text = "\n".join(lines_for_prompt)
@@ -431,14 +435,16 @@ class OpenAIHandler:
 
         if save_markdown:
             if output_dir is None or vault_path is None:
-                raise ValueError("output_dir and vault_path must be provided when save_markdown is True")
+                raise ValueError(
+                    "output_dir and vault_path must be provided when save_markdown is True"
+                )
 
             source_path = Path(source_file)
             rel_path = source_path.relative_to(vault_path)
-            output_path = output_dir / rel_path.with_suffix('.hub.md')
+            output_path = output_dir / rel_path.with_suffix(".hub.md")
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(output_path, 'w', encoding='utf-8') as f:
+            with open(output_path, "w", encoding="utf-8") as f:
                 f.write(markdown_result)
 
             if self.verbose:
